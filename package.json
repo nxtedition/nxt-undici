@@ -13,5 +13,59 @@
     "lru-cache": "^10.0.1",
     "undici": "^5.26.4",
     "xuid": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.2",
+    "eslint": "^8.50.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.28.1",
+    "eslint-plugin-n": "^16.1.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^6.0.0",
+    "husky": "^8.0.3",
+    "lint-staged": "^14.0.1",
+    "pinst": "^3.0.0",
+    "prettier": "^3.0.3",
+    "tap": "^18.4.2"
+  },
+  "scripts": {
+    "prepare": "husky install",
+    "prepublishOnly": "pinst --disable",
+    "postpublish": "pinst --enable",
+    "test": "tap test"
+  },
+  "lint-staged": {
+    "*.{js,jsx,md,ts}": [
+      "eslint",
+      "prettier --write"
+    ]
+  },
+  "prettier": {
+    "printWidth": 100,
+    "semi": false,
+    "singleQuote": true
+  },
+  "eslintConfig": {
+    "parserOptions": {
+      "ecmaFeatures": {
+        "ecmaVersion": 2020
+      }
+    },
+    "extends": [
+      "standard",
+      "prettier",
+      "prettier/prettier"
+    ],
+    "rules": {
+      "quotes": [
+        "error",
+        "single",
+        {
+          "avoidEscape": true,
+          "allowTemplateLiterals": true
+        }
+      ]
+    }
   }
 }

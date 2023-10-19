@@ -1,6 +1,6 @@
 const { test } = require('tap')
 const { createServer } = require('http')
-const { request } = require('../../lib/undici/index.js')
+const { request } = require('../')
 
 test('pre abort signal w/ reason', (t) => {
   t.plan(1)

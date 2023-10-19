@@ -11,8 +11,7 @@
     "cache-control-parser": "^2.0.4",
     "http-errors": "^2.0.0",
     "lru-cache": "^10.0.1",
-    "undici": "^5.26.4",
-    "xuid": "^4.1.2"
+    "undici": "^5.26.4"
   },
   "devDependencies": {
     "@types/node": "^20.8.2",

@@ -110,6 +110,7 @@ t.test(
       headers,
       body: bodyStream,
     } = await request(`http://${server}/303`, {
+      id: null,
       method: 'PATCH',
       headers: [
         'Content-Encoding',
@@ -151,6 +152,7 @@ t.test(
       headers,
       body: bodyStream,
     } = await request(`http://${server}/303`, {
+      id: null,
       method: 'PATCH',
       headers: {
         'Content-Encoding': 'gzip',

@@ -19,7 +19,7 @@ t.test('should follow redirection after a HTTP 300', async (t) => {
     headers,
     body: bodyStream,
   } = await request(`http://${server}/300?key=value`, {
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -50,7 +50,7 @@ t.test('should follow redirection after a HTTP 301', async (t) => {
   } = await request(`http://${server}/301`, {
     method: 'POST',
     body: 'REQUEST',
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -70,7 +70,7 @@ t.test('should follow redirection after a HTTP 302', async (t) => {
   } = await request(`http://${server}/302`, {
     method: 'PUT',
     body: Buffer.from('REQUEST'),
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -90,7 +90,7 @@ t.test('should follow redirection after a HTTP 303 changing method to GET', asyn
   } = await request(`http://${server}/303`, {
     method: 'PATCH',
     body: 'REQUEST',
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -128,7 +128,7 @@ t.test(
         'X-Bar',
         '4',
       ],
-      maxRedirections: 10,
+      follow: 10,
     })
 
     const body = await bodyStream.text()
@@ -163,7 +163,7 @@ t.test(
         Host: 'localhost',
         'X-Bar': '4',
       },
-      maxRedirections: 10,
+      follow: 10,
     })
 
     const body = await bodyStream.text()
@@ -186,7 +186,7 @@ t.test('should follow redirection after a HTTP 307', async (t) => {
     body: bodyStream,
   } = await request(`http://${server}/307`, {
     method: 'DELETE',
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -205,7 +205,7 @@ t.test('should follow redirection after a HTTP 308', async (t) => {
     body: bodyStream,
   } = await request(`http://${server}/308`, {
     method: 'OPTIONS',
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -223,7 +223,7 @@ t.test('should ignore HTTP 3xx response bodies', async (t) => {
     headers,
     body: bodyStream,
   } = await request(`http://${server}/`, {
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -237,7 +237,7 @@ t.test('should ignore query after redirection', async (t) => {
   const server = await startRedirectingWithQueryParams(t)
 
   const { statusCode, headers } = await request(`http://${server}/`, {
-    maxRedirections: 10,
+    follow: 10,
     query: { param1: 'first' },
   })
 
@@ -250,7 +250,7 @@ t.test('should follow a redirect chain up to the allowed number of times', async
 
   try {
     await request(`http://${server}/300`, {
-      maxRedirections: 2,
+      follow: 2,
     })
     t.fail()
   } catch (err) {
@@ -269,7 +269,7 @@ t.test('when a Location response header is NOT present', async (t) => {
         headers,
         body: bodyStream,
       } = await request(`http://${server}/${code}`, {
-        maxRedirections: 10,
+        follow: 10,
       })
 
       const body = await bodyStream.text()
@@ -292,7 +292,7 @@ t.test('should not follow redirects when using Readable request bodies', async (
     await request(`http://${server}/301`, {
       method: 'POST',
       body: createReadable('REQUEST'),
-      maxRedirections: 10,
+      follow: 10,
     })
     t.fail()
   } catch (err) {
@@ -309,7 +309,7 @@ t.test('should follow redirections when going cross origin', async (t) => {
     body: bodyStream,
   } = await request(`http://${server1}`, {
     method: 'POST',
-    maxRedirections: 10,
+    follow: 10,
   })
 
   const body = await bodyStream.text()
@@ -321,7 +321,7 @@ t.test('should follow redirections when going cross origin', async (t) => {
 
 t.test('should handle errors (promise)', async (t) => {
   try {
-    await request('http://localhost:0', { maxRedirections: 10 })
+    await request('http://localhost:0', { follow: 10 })
     t.fail('Did not throw')
   } catch (error) {
     t.match(error.code, /EADDRNOTAVAIL|ECONNREFUSED/)
@@ -331,7 +331,7 @@ t.test('should handle errors (promise)', async (t) => {
 t.test('removes authorization header on third party origin', async (t) => {
   const [server1] = await startRedirectingWithAuthorization(t, 'secret')
   const { body: bodyStream } = await request(`http://${server1}`, {
-    maxRedirections: 10,
+    follow: 10,
     headers: {
       authorization: 'secret',
     },
@@ -345,7 +345,7 @@ t.test('removes authorization header on third party origin', async (t) => {
 t.test('removes cookie header on third party origin', async (t) => {
   const [server1] = await startRedirectingWithCookie(t, 'a=b')
   const { body: bodyStream } = await request(`http://${server1}`, {
-    maxRedirections: 10,
+    follow: 10,
     headers: {
       cookie: 'a=b',
     },

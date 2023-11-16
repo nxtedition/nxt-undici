@@ -31,7 +31,7 @@ async function run() {
 
   server.listen(0, async () => {
     for (let n = 0; n < 10e3; n++) {
-      const body = await request(`http://localhost:${server.address().port}`)
+      const body = await request(`http://0.0.0.0:${server.address().port}`)
       const hasher = crypto.createHash('md5')
       await new Promise((resolve) =>
         body

@@ -4,11 +4,13 @@
   "license": "MIT",
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",
+  "type": "module",
   "files": [
     "lib/*"
   ],
   "dependencies": {
     "cache-control-parser": "^2.0.4",
+    "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
     "lru-cache": "^10.0.1",
     "undici": "^5.27.0"

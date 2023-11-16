@@ -1,5 +1,5 @@
-const t = require('tap')
-const {
+import t from 'tap'
+import {
   startRedirectingServer,
   startRedirectingWithBodyServer,
   startRedirectingChainServers,
@@ -7,9 +7,9 @@ const {
   startRedirectingWithAuthorization,
   startRedirectingWithCookie,
   startRedirectingWithQueryParams,
-} = require('./utils/redirecting-servers')
-const { createReadable } = require('./utils/stream')
-const { request } = require('../')
+} from './utils/redirecting-servers.js'
+import { createReadable } from './utils/stream.js'
+import { request } from '../lib/index.js'
 
 t.test('should follow redirection after a HTTP 300', async (t) => {
   const server = await startRedirectingServer(t)
@@ -124,7 +124,7 @@ t.test(
         'X-Foo3',
         '3',
         'Host',
-        'localhost',
+        '0.0.0.0',
         'X-Bar',
         '4',
       ],
@@ -160,7 +160,7 @@ t.test(
         'X-Foo2': '2',
         'Content-Type': 'application/json',
         'X-Foo3': '3',
-        Host: 'localhost',
+        Host: '0.0.0.0',
         'X-Bar': '4',
       },
       follow: 10,
@@ -321,7 +321,7 @@ t.test('should follow redirections when going cross origin', async (t) => {
 
 t.test('should handle errors (promise)', async (t) => {
   try {
-    await request('http://localhost:0', { follow: 10 })
+    await request('http://0.0.0.0:0', { follow: 10 })
     t.fail('Did not throw')
   } catch (error) {
     t.match(error.code, /EADDRNOTAVAIL|ECONNREFUSED/)

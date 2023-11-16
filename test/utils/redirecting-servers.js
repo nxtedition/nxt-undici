@@ -1,20 +1,18 @@
-'use strict'
-
-const { createServer } = require('http')
+import { createServer } from 'node:http'
 
 function startServer(t, handler) {
   return new Promise((resolve) => {
     const server = createServer(handler)
 
     server.listen(0, () => {
-      resolve(`localhost:${server.address().port}`)
+      resolve(`0.0.0.0:${server.address().port}`)
     })
 
     t.teardown(server.close.bind(server))
   })
 }
 
-async function startRedirectingServer(t) {
+export async function startRedirectingServer(t) {
   const server = await startServer(t, (req, res) => {
     // Parse the path and normalize arguments
     let [code, redirections, query] = req.url.slice(1).split(/[/?]/)
@@ -80,7 +78,7 @@ async function startRedirectingServer(t) {
   return server
 }
 
-async function startRedirectingWithBodyServer(t) {
+export async function startRedirectingWithBodyServer(t) {
   const server = await startServer(t, (req, res) => {
     if (req.url === '/') {
       res.statusCode = 301
@@ -97,7 +95,7 @@ async function startRedirectingWithBodyServer(t) {
   return server
 }
 
-function startRedirectingWithoutLocationServer(t) {
+export function startRedirectingWithoutLocationServer(t) {
   return startServer(t, (req, res) => {
     // Parse the path and normalize arguments
     let [code] = req.url
@@ -115,7 +113,7 @@ function startRedirectingWithoutLocationServer(t) {
   })
 }
 
-async function startRedirectingChainServers(t) {
+export async function startRedirectingChainServers(t) {
   const server1 = await startServer(t, (req, res) => {
     if (req.url === '/') {
       res.statusCode = 301
@@ -158,7 +156,7 @@ async function startRedirectingChainServers(t) {
   return [server1, server2, server3]
 }
 
-async function startRedirectingWithAuthorization(t, authorization) {
+export async function startRedirectingWithAuthorization(t, authorization) {
   const server1 = await startServer(t, (req, res) => {
     if (req.headers.authorization !== authorization) {
       res.statusCode = 403
@@ -181,7 +179,7 @@ async function startRedirectingWithAuthorization(t, authorization) {
   return [server1, server2]
 }
 
-async function startRedirectingWithCookie(t, cookie) {
+export async function startRedirectingWithCookie(t, cookie) {
   const server1 = await startServer(t, (req, res) => {
     if (req.headers.cookie !== cookie) {
       res.statusCode = 403
@@ -204,7 +202,7 @@ async function startRedirectingWithCookie(t, cookie) {
   return [server1, server2]
 }
 
-async function startRedirectingWithRelativePath(t) {
+export async function startRedirectingWithRelativePath(t) {
   const server = await startServer(t, (req, res) => {
     res.setHeader('Connection', 'close')
 
@@ -225,7 +223,7 @@ async function startRedirectingWithRelativePath(t) {
   return server
 }
 
-async function startRedirectingWithQueryParams(t) {
+export async function startRedirectingWithQueryParams(t) {
   const server = await startServer(t, (req, res) => {
     if (req.url === '/?param1=first') {
       res.statusCode = 301
@@ -240,16 +238,4 @@ async function startRedirectingWithQueryParams(t) {
   })
 
   return server
-}
-
-module.exports = {
-  startServer,
-  startRedirectingServer,
-  startRedirectingWithBodyServer,
-  startRedirectingWithoutLocationServer,
-  startRedirectingChainServers,
-  startRedirectingWithAuthorization,
-  startRedirectingWithCookie,
-  startRedirectingWithRelativePath,
-  startRedirectingWithQueryParams,
 }

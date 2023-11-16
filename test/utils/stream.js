@@ -1,6 +1,6 @@
-const { Readable, Writable } = require('stream')
+import { Readable, Writable } from 'node:stream'
 
-function createReadable(data) {
+export function createReadable(data) {
   return new Readable({
     read() {
       this.push(Buffer.from(data))
@@ -9,7 +9,7 @@ function createReadable(data) {
   })
 }
 
-function createWritable(target) {
+export function createWritable(target) {
   return new Writable({
     write(chunk, _, callback) {
       target.push(chunk.toString())
@@ -20,5 +20,3 @@ function createWritable(target) {
     },
   })
 }
-
-module.exports = { createReadable, createWritable }

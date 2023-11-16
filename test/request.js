@@ -1,6 +1,6 @@
-const { test } = require('tap')
-const { createServer } = require('http')
-const { request } = require('../')
+import { test } from 'tap'
+import { createServer } from 'node:http'
+import { request } from '../lib/index.js'
 
 test('simple request', (t) => {
   t.plan(1)
@@ -10,7 +10,7 @@ test('simple request', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const body = await request(`http://localhost:${server.address().port}`)
+    const body = await request(`http://0.0.0.0:${server.address().port}`)
     let str = ''
     for await (const chunk of body) {
       str += chunk

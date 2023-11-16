@@ -1,6 +1,6 @@
-const { test } = require('tap')
-const { createServer } = require('http')
-const { request } = require('../')
+import { createServer } from 'node:http'
+import { test } from 'tap'
+import { request } from '../lib/index.js'
 
 test('retry status', (t) => {
   t.plan(3)
@@ -14,7 +14,7 @@ test('retry status', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://localhost:${server.address().port}`)
+    const ures = await request(`http://0.0.0.0:${server.address().port}`)
     await ures.dump()
     t.equal(ures.statusCode, 200)
   })
@@ -35,7 +35,7 @@ test('retry destroy pre response', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://localhost:${server.address().port}`)
+    const ures = await request(`http://0.0.0.0:${server.address().port}`)
     await ures.dump()
     t.equal(ures.statusCode, 200)
   })
@@ -65,7 +65,7 @@ test('retry destroy post response', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://localhost:${server.address().port}`)
+    const ures = await request(`http://0.0.0.0:${server.address().port}`)
     t.equal(ures.statusCode, 200)
     const text = await ures.text().catch((err) => console.error(err))
     t.equal(text, 'asdend')

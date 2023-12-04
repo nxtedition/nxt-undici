@@ -67,7 +67,7 @@ test('retry destroy post response', (t) => {
   server.listen(0, async () => {
     const ures = await request(`http://0.0.0.0:${server.address().port}`)
     t.equal(ures.statusCode, 200)
-    const text = await ures.text().catch((err) => console.error(err))
+    const text = await ures.text()
     t.equal(text, 'asdend')
   })
 })

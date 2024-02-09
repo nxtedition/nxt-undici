@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/nxt-undici",
-  "version": "2.0.37",
+  "version": "2.0.38",
   "license": "MIT",
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",

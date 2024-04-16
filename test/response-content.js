@@ -14,18 +14,18 @@ test('put & Readable', (t) => {
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const _err = new Error('asd')
-    const body = await request(`http://0.0.0.0:${server.address().port}`, {
-      method: 'PUT',
-      body: async function () {
-        const src = new Readable({ read() {} })
-        setTimeout(() => {
-          src.destroy(_err)
-        }, 100)
-        src.push('asd')
-        return src
-      },
-    })
     try {
+      const body = await request(`http://0.0.0.0:${server.address().port}`, {
+        method: 'PUT',
+        body: async function () {
+          const src = new Readable({ read() {} })
+          setTimeout(() => {
+            src.destroy(_err)
+          }, 100)
+          src.push('asd')
+          return src
+        },
+      })
       await body.text()
       t.fail()
     } catch (err) {
@@ -76,13 +76,13 @@ test('put & get', (t) => {
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const port = server.address().port
-    const body = await request(`http://0.0.0.0:${port}`, {
-      method: 'PUT',
-      body: async function () {
-        return await request(`http://0.0.0.0:${port}`)
-      },
-    })
     try {
+      const body = await request(`http://0.0.0.0:${port}`, {
+        method: 'PUT',
+        body: async function () {
+          return await request(`http://0.0.0.0:${port}`)
+        },
+      })
       await body.text()
       t.fail()
     } catch (err) {

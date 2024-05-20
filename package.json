@@ -13,21 +13,21 @@
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
     "lru-cache": "^10.2.0",
-    "undici": "^6.16.1"
+    "undici": "^6.18.0"
   },
   "devDependencies": {
-    "@types/node": "^20.12.11",
+    "@types/node": "^20.12.12",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^17.6.0",
+    "eslint-plugin-n": "^17.7.0",
     "eslint-plugin-promise": "^6.1.1",
     "husky": "^9.0.11",
     "lint-staged": "^15.2.2",
     "pinst": "^3.0.0",
     "prettier": "^3.2.5",
-    "tap": "^18.7.2"
+    "tap": "^18.8.0"
   },
   "scripts": {
     "prepare": "husky install",

@@ -9,25 +9,25 @@
     "lib/*"
   ],
   "dependencies": {
-    "cache-control-parser": "^2.0.5",
+    "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
     "lru-cache": "^10.2.0",
-    "undici": "^6.18.0"
+    "undici": "^6.18.2"
   },
   "devDependencies": {
-    "@types/node": "^20.12.12",
+    "@types/node": "^20.14.2",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^17.7.0",
-    "eslint-plugin-promise": "^6.1.1",
+    "eslint-plugin-n": "^17.9.0",
+    "eslint-plugin-promise": "^6.2.0",
     "husky": "^9.0.11",
-    "lint-staged": "^15.2.2",
+    "lint-staged": "^15.2.7",
     "pinst": "^3.0.0",
-    "prettier": "^3.2.5",
-    "tap": "^18.8.0"
+    "prettier": "^3.3.2",
+    "tap": "^19.2.5"
   },
   "scripts": {
     "prepare": "husky install",

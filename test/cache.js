@@ -1,6 +1,6 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
-import undici from 'undici'
+import undici from '@nxtedition/undici'
 import { interceptors } from '../lib/index.js'
 
 test('cache request', (t) => {
@@ -11,7 +11,7 @@ test('cache request', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const { body } = undici.request(`http://0.0.0.0:${server.address().port}`, {
+    const { body } = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache),
       cache: true,
     })

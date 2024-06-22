@@ -9,14 +9,14 @@
     "lib/*"
   ],
   "dependencies": {
+    "@nxtedition/undici": "^7.0.1",
     "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
-    "lru-cache": "^10.2.0",
-    "undici": "^6.18.2"
+    "lru-cache": "^10.2.0"
   },
   "devDependencies": {
-    "@types/node": "^20.14.2",
+    "@types/node": "^20.14.8",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.0.0",

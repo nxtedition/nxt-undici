@@ -12,7 +12,7 @@ test('cache request', (t) => {
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const { body } = await undici.request(`http://0.0.0.0:${server.address().port}`, {
-      dispatcher: new undici.Agent().compose(interceptors.cache),
+      dispatcher: new undici.Agent().compose(interceptors.cache()),
       cache: true,
     })
     let str = ''

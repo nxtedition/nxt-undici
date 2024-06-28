@@ -14,9 +14,9 @@ test('retry status', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://0.0.0.0:${server.address().port}`)
-    await ures.dump()
-    t.equal(ures.statusCode, 200)
+    const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`)
+    await body.dump()
+    t.equal(statusCode, 200)
   })
 })
 
@@ -35,9 +35,9 @@ test('retry destroy pre response', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://0.0.0.0:${server.address().port}`)
-    await ures.dump()
-    t.equal(ures.statusCode, 200)
+    const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`)
+    await body.dump()
+    t.equal(statusCode, 200)
   })
 })
 
@@ -65,9 +65,9 @@ test('retry destroy post response', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const ures = await request(`http://0.0.0.0:${server.address().port}`)
-    t.equal(ures.statusCode, 200)
-    const text = await ures.text()
+    const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`)
+    t.equal(statusCode, 200)
+    const text = await body.text()
     t.equal(text, 'asdend')
   })
 })

@@ -10,7 +10,7 @@ test('simple request', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const body = await request(`http://0.0.0.0:${server.address().port}`)
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`)
     let str = ''
     for await (const chunk of body) {
       str += chunk

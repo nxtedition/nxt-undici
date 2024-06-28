@@ -15,7 +15,7 @@ test('put & Readable', (t) => {
   server.listen(0, async () => {
     const _err = new Error('asd')
     try {
-      const body = await request(`http://0.0.0.0:${server.address().port}`, {
+      const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
         method: 'PUT',
         body: async function () {
           const src = new Readable({ read() {} })
@@ -47,7 +47,7 @@ test('get', (t) => {
   server.listen(0, async () => {
     const port = server.address().port
     try {
-      const body = await request(`http://0.0.0.0:${port}`, {
+      const { body } = await request(`http://0.0.0.0:${port}`, {
         method: 'GET',
       })
       await body.text()
@@ -77,10 +77,11 @@ test('put & get', (t) => {
   server.listen(0, async () => {
     const port = server.address().port
     try {
-      const body = await request(`http://0.0.0.0:${port}`, {
+      const { body } = await request(`http://0.0.0.0:${port}`, {
         method: 'PUT',
         body: async function () {
-          return await request(`http://0.0.0.0:${port}`)
+          const { body } = await request(`http://0.0.0.0:${port}`)
+          return body
         },
       })
       await body.text()

@@ -9,7 +9,7 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^8.0.0",
+    "@nxtedition/undici": "^8.1.0",
     "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
@@ -22,12 +22,12 @@
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-n": "^17.9.0",
-    "eslint-plugin-promise": "^6.2.0",
+    "eslint-plugin-promise": "^6.4.0",
     "husky": "^9.0.11",
     "lint-staged": "^15.2.7",
     "pinst": "^3.0.0",
     "prettier": "^3.3.2",
-    "tap": "^20.0.1"
+    "tap": "^20.0.3"
   },
   "scripts": {
     "prepare": "husky install",

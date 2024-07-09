@@ -62,16 +62,63 @@ import { interceptors } from '../lib/index.js'
 //   return cache
 // }
 
-test('cache request, vary:host, populated cache', (t) => {
+// test('cache request, found a matching entry in cache', (t) => {
+//   t.plan(1)
+//   const server = createServer((req, res) => {
+//     res.writeHead(200, { Vary: 'Host, Origin, user-agent' })
+//     res.end('asd')
+//   })
+
+//   t.teardown(server.close.bind(server))
+
+//   // const cache = exampleCache()
+//   server.listen(0, async () => {
+//     const response = await undici.request(`http://0.0.0.0:${server.address().port}`, {
+//       dispatcher: new undici.Agent().compose(
+//         interceptors.responseError(),
+//         interceptors.requestBodyFactory(),
+//         interceptors.log(),
+//         interceptors.dns(),
+//         interceptors.lookup(),
+//         interceptors.requestId(),
+//         interceptors.responseRetry(),
+//         interceptors.responseVerify(),
+//         interceptors.redirect(),
+//         interceptors.cache(),
+//         interceptors.proxy()
+//       ),
+//       cache: true,
+//       Accept: 'application/txt',
+//       'User-Agent': 'Chrome',
+//       origin2: 'www.google.com/images'
+//     })
+//     let str = ''
+//     for await (const chunk of response.body) {
+//       str += chunk
+//     }
+
+//     console.log('response: ')
+//     console.log(response)
+//     t.equal(str, 'asd2')
+//   })
+// })
+
+test('cache request, no matching entry found. Store response in cache', (t) => {
   t.plan(1)
   const server = createServer((req, res) => {
-    res.writeHead(307, { Vary: 'Host' })
+    res.writeHead(307, {
+      Vary: 'Host',
+      'Cache-Control': 'public, immutable',
+      'Content-Length': 1000,
+      'Content-Type': 'text/html',
+      Connection: 'keep-alive',
+      Location: 'http://www.blankwebsite.com/',
+    })
     res.end('asd')
   })
 
   t.teardown(server.close.bind(server))
 
-  // const cache = exampleCache()
   server.listen(0, async () => {
     const response = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
@@ -86,4 +133,6 @@ test('cache request, vary:host, populated cache', (t) => {
     console.log(response)
     t.equal(str, 'asd')
   })
+
+  // Here we need to make another request to check if we get back the previous response but from the cache instead.
 })

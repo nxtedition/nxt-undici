@@ -1,138 +1,154 @@
 import { test } from 'tap'
-// import { LRUCache } from 'lru-cache'
 import { createServer } from 'node:http'
 import undici from 'undici'
 import { interceptors } from '../lib/index.js'
 
-// test('cache request', (t) => {
-//   t.plan(1)
-//   const server = createServer((req, res) => {
-//     res.end('asd')
-//   })
+// Placeholder until we implement a better LRU Cache
+class CacheStore {
+  constructor() {
+    this.cache = new Map()
+  }
 
-//   t.teardown(server.close.bind(server))
-//   server.listen(0, async () => {
-//     const { body } = await undici.request(`http://0.0.0.0:${server.address().port}`, {
-//       dispatcher: new undici.Agent().compose(interceptors.cache()),
-//       cache: true,
-//     })
-//     let str = ''
-//     for await (const chunk of body) {
-//       str += chunk
-//     }
-//     t.equal(str, 'asd')
-//   })
-// })
+  set(key, value) {
+    this.cache.set(key, value)
+  }
 
-// class CacheStore {
-//   constructor({ maxSize = 1024 * 1024 }) {
-//     this.maxSize = maxSize
-//     this.cache = new LRUCache({ maxSize })
-//   }
+  get(key) {
+    return this.cache.get(key)
+  }
+}
 
-//   set(key, value, opts) {
-//     this.cache.set(key, value, opts)
-//   }
+async function exampleCache() {
+  const cache = new CacheStore()
 
-//   get(key) {
-//     return this.cache.get(key)
-//   }
-// }
+  const rawHeaders = [
+    Buffer.from('Content-Type'),
+    Buffer.from('application/json'),
+    Buffer.from('Content-Length'),
+    Buffer.from('10'),
+    Buffer.from('Cache-Control'),
+    Buffer.from('public'),
+  ]
 
-// Error: "invalid size value (must be positive integer). When maxSize or maxEntrySize is used, sizeCalculation or size must be set."
-//
-// function exampleCache(){
-//   const options = {
-//     max: 500,
-//     maxSize: 5000,
-//     sizeCalculation: (value, key) => {
-//       return 1
-//     },
-//   }
-//   const cache = new CacheStore(options)
-//   cache.set('GET:/', {data: 'dataFromCache', vary: {'origin': 'http://0.0.0.0:54758', 'Accept-Encoding': 'Application/json'}}, {})
-//   cache.set('GET:/foobar', {data: 'dataFromCache'}, {})
-//   cache.set('POST:/foo', {data: 'dataFromCache', vary: {'host': '0.0.0.0:54758'}}, {})
-//   cache.set('GET:/', {data: {
-//     headers: [
-//       'Vary': {'origin': 'http://0.0.0.0:54758', 'Accept-Encoding': 'Application/json'}
-//     ],
-//   }})
+  const entries = [
+    {
+      data: {
+        statusCode: 200,
+        statusMessage: '',
+        rawHeaders,
+        rawTrailers: ['Hello'],
+        body: ['asd1'],
+      },
+      vary: [
+        ['Accept', 'application/xml'],
+        ['User-Agent', 'Mozilla/5.0'],
+      ],
+      size: 100,
+      ttl: 31556952000,
+    },
+    {
+      data: {
+        statusCode: 200,
+        statusMessage: '',
+        rawHeaders,
+        rawTrailers: ['Hello'],
+        body: ['asd2'],
+      },
+      vary: [
+        ['Accept', 'application/txt'],
+        ['User-Agent', 'Chrome'],
+        ['origin2', 'www.google.com/images'],
+      ],
+      size: 100,
+      ttl: 31556952000,
+    },
+    // {
+    //   statusCode: 200, statusMessage: 'last', rawHeaders, rawTrailers: ['Hello'], body: ['asd3'],
+    //   vary: null },
+    {
+      data: {
+        statusCode: 200,
+        statusMessage: 'first',
+        rawHeaders,
+        rawTrailers: ['Hello'],
+        body: ['asd4'],
+      },
+      vary: [
+        ['Accept', 'application/json'],
+        ['User-Agent', 'Mozilla/5.0'],
+        ['host2', 'www.google.com'],
+        ['origin2', 'www.google.com/images'],
+      ],
+      size: 100,
+      ttl: 31556952000,
+    },
+  ]
+  cache.set('GET:/', entries)
+  return cache
+}
 
-//   return cache
-// }
-
-// test('cache request, found a matching entry in cache', (t) => {
-//   t.plan(1)
-//   const server = createServer((req, res) => {
-//     res.writeHead(200, { Vary: 'Host, Origin, user-agent' })
-//     res.end('asd')
-//   })
-
-//   t.teardown(server.close.bind(server))
-
-//   // const cache = exampleCache()
-//   server.listen(0, async () => {
-//     const response = await undici.request(`http://0.0.0.0:${server.address().port}`, {
-//       dispatcher: new undici.Agent().compose(
-//         interceptors.responseError(),
-//         interceptors.requestBodyFactory(),
-//         interceptors.log(),
-//         interceptors.dns(),
-//         interceptors.lookup(),
-//         interceptors.requestId(),
-//         interceptors.responseRetry(),
-//         interceptors.responseVerify(),
-//         interceptors.redirect(),
-//         interceptors.cache(),
-//         interceptors.proxy()
-//       ),
-//       cache: true,
-//       Accept: 'application/txt',
-//       'User-Agent': 'Chrome',
-//       origin2: 'www.google.com/images'
-//     })
-//     let str = ''
-//     for await (const chunk of response.body) {
-//       str += chunk
-//     }
-
-//     console.log('response: ')
-//     console.log(response)
-//     t.equal(str, 'asd2')
-//   })
-// })
-
-test('cache request, no matching entry found. Store response in cache', (t) => {
-  t.plan(1)
+test('cache request, no matching entry found. Store response in cache', async (t) => {
+  t.plan(4)
   const server = createServer((req, res) => {
     res.writeHead(307, {
-      Vary: 'Host',
+      Vary: 'Origin2, User-Agent, Accept',
       'Cache-Control': 'public, immutable',
-      'Content-Length': 1000,
+      'Content-Length': 4,
       'Content-Type': 'text/html',
-      Connection: 'keep-alive',
-      Location: 'http://www.blankwebsite.com/',
+      Connection: 'close',
+      Location: 'http://www.google.com/',
     })
-    res.end('asd')
+    res.end('foob')
   })
 
   t.teardown(server.close.bind(server))
 
+  const cache = await exampleCache()
+
+  console.log('Cache before first request:')
+  console.log({ cache: cache.cache })
+
+  const cacheLength1 = cache.get('GET:/').length
+
+  console.log({ cacheLength1 })
+
   server.listen(0, async () => {
-    const response = await undici.request(`http://0.0.0.0:${server.address().port}`, {
+    const serverPort = server.address().port
+    // response not found in cache, response should be added to cache.
+    const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache: true,
+      cache,
     })
     let str = ''
     for await (const chunk of response.body) {
       str += chunk
     }
+    const cacheLength2 = cache.get('GET:/').length
+    console.log({ cacheLength2 })
+    console.log({ str })
+    t.equal(str, 'foob')
+    t.equal(cacheLength2, cacheLength1 + 1)
 
-    console.log('response: ')
-    console.log(response)
-    t.equal(str, 'asd')
+    console.log('Cache before second request:')
+    console.log({ cache: cache.cache })
+
+    // response found in cache, return cached response.
+    const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
+      dispatcher: new undici.Agent().compose(interceptors.cache()),
+      cache,
+      Accept: 'application/txt',
+      'User-Agent': 'Chrome',
+      origin2: 'www.google.com/images',
+    })
+    let str2 = ''
+    for await (const chunk of response2.body) {
+      str2 += chunk
+    }
+
+    const cacheLength3 = cache.get('GET:/').length
+    console.log({ cacheLength3 })
+
+    t.equal(str2, 'asd2')
+    t.equal(cacheLength3, cacheLength2)
   })
-
-  // Here we need to make another request to check if we get back the previous response but from the cache instead.
 })

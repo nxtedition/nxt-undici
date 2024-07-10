@@ -33,8 +33,7 @@
     "prepare": "husky",
     "prepublishOnly": "pinst --disable",
     "postpublish": "pinst --enable",
-    "test": "tap test",
-    "taprun": "tap run"
+    "test": "tap test"
   },
   "lint-staged": {
     "*.{js,jsx,md,ts}": [

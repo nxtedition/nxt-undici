@@ -1,6 +1,6 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
-import undici from '@nxtedition/undici'
+import undici from 'undici'
 import { interceptors } from '../lib/index.js'
 
 test('cache request', (t) => {

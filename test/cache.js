@@ -2,30 +2,98 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import undici from 'undici'
 import { interceptors } from '../lib/index.js'
+import { DatabaseSync } from 'node:sqlite'
 
-// Placeholder until we implement a better LRU Cache
 class CacheStore {
   constructor() {
-    this.cache = new Map()
+    this.database = null
+    this.init()
   }
 
-  set(key, value) {
-    this.cache.set(key, value)
+  init() {
+    this.database = new DatabaseSync('file:memdb1?mode=memory&cache=shared')
+
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS cacheInterceptor(
+        key TEXT,
+        data TEXT,
+        vary TEXT,
+        size INTEGER,
+        ttl INTEGER,
+        insertTime INTEGER
+      ) STRICT
+    `)
+  }
+
+  set(key, entry) {
+    if (!this.database) {
+      throw new Error('Database not initialized')
+    }
+
+    // Format the entry object
+    entry.data = JSON.stringify(entry.data)
+    entry.vary = JSON.stringify(entry.vary)
+
+    const insert = this.database.prepare(
+      'INSERT INTO cacheInterceptor (key, data, vary, size, ttl, insertTime) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+
+    insert.run(key, entry.data, entry.vary, entry.size, entry.ttl, Date.now())
+
+    this.purge()
   }
 
   get(key) {
-    return this.cache.get(key)
+    if (!this.database) {
+      throw new Error('Database not initialized')
+    }
+    this.purge()
+    const query = this.database.prepare('SELECT * FROM cacheInterceptor WHERE key = ?')
+    const rows = query.all(key)
+    rows.map((i) => {
+      i.data = JSON.parse(i.data)
+      i.vary = JSON.parse(i.vary)
+      return i
+    })
+
+    // Just in case purge hasn't finished
+    const nonExpiredRows = rows.filter((i) => i.insertTime + i.ttl > Date.now())
+
+    return nonExpiredRows
+  }
+
+  purge() {
+    if (!this.database) {
+      throw new Error('Database not initialized')
+    }
+    const query = this.database.prepare('DELETE FROM cacheInterceptor WHERE insertTime + ttl < ?')
+    query.run(Date.now())
+  }
+
+  deleteAll() {
+    const query = this.database.prepare('DELETE FROM cacheInterceptor')
+    query.run()
   }
 }
 
-async function exampleCache() {
-  const cache = new CacheStore()
-
-  const rawHeaders = [
+function exampleEntries() {
+  const rawHeaders1 = [
     Buffer.from('Content-Type'),
     Buffer.from('application/json'),
     Buffer.from('Content-Length'),
     Buffer.from('10'),
+    Buffer.from('Cache-Control'),
+    Buffer.from('public'),
+  ]
+  const rawHeaders2 = [
+    Buffer.from('Accept'),
+    Buffer.from('application/txt'),
+    Buffer.from('Content-Length'),
+    Buffer.from('4'),
+    Buffer.from('origin2'),
+    Buffer.from('www.google.com/images'),
+    Buffer.from('User-Agent'),
+    Buffer.from('Chrome'),
     Buffer.from('Cache-Control'),
     Buffer.from('public'),
   ]
@@ -35,8 +103,8 @@ async function exampleCache() {
       data: {
         statusCode: 200,
         statusMessage: '',
-        rawHeaders,
-        rawTrailers: ['Hello'],
+        rawHeaders: rawHeaders1,
+        rawTrailers: ['Hello', 'world'],
         body: ['asd1'],
       },
       vary: [
@@ -50,8 +118,8 @@ async function exampleCache() {
       data: {
         statusCode: 200,
         statusMessage: '',
-        rawHeaders,
-        rawTrailers: ['Hello'],
+        rawHeaders: rawHeaders2,
+        rawTrailers: ['Hello', 'world'],
         body: ['asd2'],
       },
       vary: [
@@ -69,7 +137,7 @@ async function exampleCache() {
       data: {
         statusCode: 200,
         statusMessage: 'first',
-        rawHeaders,
+        rawHeaders1,
         rawTrailers: ['Hello'],
         body: ['asd4'],
       },
@@ -82,11 +150,28 @@ async function exampleCache() {
       size: 100,
       ttl: 31556952000,
     },
+    {
+      data: {
+        statusCode: 200,
+        statusMessage: 'to be purged',
+        rawHeaders1,
+        rawTrailers: ['Hello'],
+        body: ['asd4'],
+      },
+      vary: [
+        ['Accept', 'application/json'],
+        ['User-Agent', 'Mozilla/5.0'],
+        ['host2', 'www.google.com'],
+        ['origin2', 'www.google.com/images'],
+      ],
+      size: 100,
+      ttl: 1,
+    },
   ]
-  cache.set('GET:/', entries)
-  return cache
+  return entries
 }
 
+// This test will not always pass because of different execution times of operations in the in-memory database each time.
 test('cache request, no matching entry found. Store response in cache', async (t) => {
   t.plan(4)
   const server = createServer((req, res) => {
@@ -103,42 +188,41 @@ test('cache request, no matching entry found. Store response in cache', async (t
 
   t.teardown(server.close.bind(server))
 
-  const cache = await exampleCache()
+  const cache = new CacheStore()
 
-  console.log('Cache before first request:')
-  console.log({ cache: cache.cache })
+  // populate cache
+  cache.deleteAll()
+  exampleEntries().forEach((i) => cache.set('GET:/', i))
 
   const cacheLength1 = cache.get('GET:/').length
-
-  console.log({ cacheLength1 })
 
   server.listen(0, async () => {
     const serverPort = server.address().port
     // response not found in cache, response should be added to cache.
     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache,
+      cache: true,
     })
     let str = ''
     for await (const chunk of response.body) {
       str += chunk
     }
     const cacheLength2 = cache.get('GET:/').length
-    console.log({ cacheLength2 })
-    console.log({ str })
-    t.equal(str, 'foob')
-    t.equal(cacheLength2, cacheLength1 + 1)
 
-    console.log('Cache before second request:')
-    console.log({ cache: cache.cache })
+    // should return the default server response
+    t.equal(str, 'foob')
+
+    t.equal(cacheLength2, cacheLength1 + 1)
 
     // response found in cache, return cached response.
     const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache,
-      Accept: 'application/txt',
-      'User-Agent': 'Chrome',
-      origin2: 'www.google.com/images',
+      headers: {
+        Accept: 'application/txt',
+        'User-Agent': 'Chrome',
+        origin2: 'www.google.com/images',
+      },
+      cache: true,
     })
     let str2 = ''
     for await (const chunk of response2.body) {
@@ -146,9 +230,14 @@ test('cache request, no matching entry found. Store response in cache', async (t
     }
 
     const cacheLength3 = cache.get('GET:/').length
-    console.log({ cacheLength3 })
 
+    // should return the body from the cached entry
     t.equal(str2, 'asd2')
+
+    // cache should still have the same number of entries before
+    // and after a cached entry was used as a response
     t.equal(cacheLength3, cacheLength2)
+
+    cache.database.close()
   })
 })

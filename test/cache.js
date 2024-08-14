@@ -2,79 +2,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import undici from 'undici'
 import { interceptors } from '../lib/index.js'
-import { DatabaseSync } from 'node:sqlite'
-
-class CacheStore {
-  constructor() {
-    this.database = null
-    this.init()
-  }
-
-  init() {
-    this.database = new DatabaseSync('file:memdb1?mode=memory&cache=shared')
-
-    this.database.exec(`
-      CREATE TABLE IF NOT EXISTS cacheInterceptor(
-        key TEXT,
-        data TEXT,
-        vary TEXT,
-        size INTEGER,
-        ttl INTEGER,
-        insertTime INTEGER
-      ) STRICT
-    `)
-  }
-
-  set(key, entry) {
-    if (!this.database) {
-      throw new Error('Database not initialized')
-    }
-
-    // Format the entry object
-    entry.data = JSON.stringify(entry.data)
-    entry.vary = JSON.stringify(entry.vary)
-
-    const insert = this.database.prepare(
-      'INSERT INTO cacheInterceptor (key, data, vary, size, ttl, insertTime) VALUES (?, ?, ?, ?, ?, ?)',
-    )
-
-    insert.run(key, entry.data, entry.vary, entry.size, entry.ttl, Date.now())
-
-    this.purge()
-  }
-
-  get(key) {
-    if (!this.database) {
-      throw new Error('Database not initialized')
-    }
-    this.purge()
-    const query = this.database.prepare('SELECT * FROM cacheInterceptor WHERE key = ?')
-    const rows = query.all(key)
-    rows.map((i) => {
-      i.data = JSON.parse(i.data)
-      i.vary = JSON.parse(i.vary)
-      return i
-    })
-
-    // Just in case purge hasn't finished
-    const nonExpiredRows = rows.filter((i) => i.insertTime + i.ttl > Date.now())
-
-    return nonExpiredRows
-  }
-
-  purge() {
-    if (!this.database) {
-      throw new Error('Database not initialized')
-    }
-    const query = this.database.prepare('DELETE FROM cacheInterceptor WHERE insertTime + ttl < ?')
-    query.run(Date.now())
-  }
-
-  deleteAll() {
-    const query = this.database.prepare('DELETE FROM cacheInterceptor')
-    query.run()
-  }
-}
+import { CacheStore } from '../lib/interceptor/cache.js'
 
 function exampleEntries() {
   const rawHeaders1 = [
@@ -112,7 +40,7 @@ function exampleEntries() {
         ['User-Agent', 'Mozilla/5.0'],
       ],
       size: 100,
-      ttl: 31556952000,
+      expires: Date.now() + 31556952000,
     },
     {
       data: {
@@ -128,7 +56,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      ttl: 31556952000,
+      expires: Date.now() + 31556952000,
     },
     // {
     //   statusCode: 200, statusMessage: 'last', rawHeaders, rawTrailers: ['Hello'], body: ['asd3'],
@@ -148,7 +76,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      ttl: 31556952000,
+      expires: Date.now() + 31556952000,
     },
     {
       data: {
@@ -165,7 +93,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      ttl: 1,
+      expires: Date.now(),
     },
   ]
   return entries
@@ -235,7 +163,8 @@ test('cache request, no matching entry found. Store response in cache', async (t
     t.equal(str2, 'asd2')
 
     // cache should still have the same number of entries before
-    // and after a cached entry was used as a response
+    // and after a cached entry was used as a response.
+    // In other words: the CacheHandler should not have added another entry to the cache.
     t.equal(cacheLength3, cacheLength2)
 
     cache.database.close()

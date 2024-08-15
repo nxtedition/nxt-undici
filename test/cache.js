@@ -99,6 +99,17 @@ function exampleEntries() {
   return entries
 }
 
+function dbsetup(populate = true) {
+  const cache = new CacheStore()
+  cache.deleteAll()
+
+  if (populate) {
+    exampleEntries().forEach((i) => cache.set('GET:/', i))
+  }
+
+  return cache
+}
+
 // This test will not always pass because of different execution times of operations in the in-memory database each time.
 test('cache request, no matching entry found. Store response in cache', async (t) => {
   t.plan(4)
@@ -116,11 +127,7 @@ test('cache request, no matching entry found. Store response in cache', async (t
 
   t.teardown(server.close.bind(server))
 
-  const cache = new CacheStore()
-
-  // populate cache
-  cache.deleteAll()
-  exampleEntries().forEach((i) => cache.set('GET:/', i))
+  const cache = dbsetup()
 
   const cacheLength1 = cache.get('GET:/').length
 
@@ -166,6 +173,54 @@ test('cache request, no matching entry found. Store response in cache', async (t
     // and after a cached entry was used as a response.
     // In other words: the CacheHandler should not have added another entry to the cache.
     t.equal(cacheLength3, cacheLength2)
+
+    cache.database.close()
+  })
+})
+
+test('cache request, Vary: * should not be cached', async (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.writeHead(307, {
+      Vary: '*',
+      'Cache-Control': 'public, immutable',
+      'Content-Length': 4,
+      'Content-Type': 'text/html',
+      Connection: 'close',
+      Location: 'http://www.google.com/',
+    })
+    res.end('foob')
+  })
+
+  t.teardown(server.close.bind(server))
+
+  const cache = dbsetup(false)
+
+  const cacheLength1 = cache.get('GET:/').length
+
+  server.listen(0, async () => {
+    const serverPort = server.address().port
+    // Response not found in cache, response should be added to cache.
+    // But the server returns Vary: *, and thus shouldn't be cached.
+    const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
+      dispatcher: new undici.Agent().compose(interceptors.cache()),
+      cache: true,
+      headers: {
+        Accept: 'application/txt',
+        'User-Agent': 'Chrome',
+        origin2: 'response should not be cached',
+      },
+    })
+    let str = ''
+    for await (const chunk of response.body) {
+      str += chunk
+    }
+    const cacheLength2 = cache.get('GET:/').length
+
+    // should return the default server response
+    t.equal(str, 'foob')
+
+    t.equal(cacheLength2, cacheLength1)
 
     cache.database.close()
   })

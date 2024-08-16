@@ -133,7 +133,7 @@ test('If no matching entry found, store the response in cache. Else return a mat
     // response not found in cache, response should be added to cache.
     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache: true,
+      cache,
     })
     let str = ''
     for await (const chunk of response.body) {
@@ -154,7 +154,7 @@ test('If no matching entry found, store the response in cache. Else return a mat
         'User-Agent': 'Chrome',
         origin2: 'www.google.com/images',
       },
-      cache: true,
+      cache,
     })
     let str2 = ''
     for await (const chunk of response2.body) {
@@ -200,7 +200,7 @@ test('Responses with header Vary: * should not be cached', async (t) => {
     // But the server returns Vary: *, and thus shouldn't be cached.
     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache: true,
+      cache,
       headers: {
         Accept: 'application/txt',
         'User-Agent': 'Chrome',
@@ -247,7 +247,7 @@ test('Store 307-status-responses that happen to be dependent on the Range header
 
     const request1 = undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache: true,
+      cache,
       headers: {
         range: 'bytes=0-999',
       },
@@ -269,7 +269,7 @@ test('Store 307-status-responses that happen to be dependent on the Range header
 
     const request2 = undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache: true,
+      cache,
       headers: {
         range: 'bytes=0-999',
       },

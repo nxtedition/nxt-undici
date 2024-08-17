@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/nxt-undici",
-  "version": "4.1.1",
+  "version": "4.2.5",
   "license": "MIT",
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",
@@ -9,28 +9,28 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^8.1.0",
     "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
-    "lru-cache": "^10.3.0"
+    "lru-cache": "^11.0.0",
+    "undici": "^6.19.5"
   },
   "devDependencies": {
-    "@types/node": "^20.14.9",
+    "@types/node": "^22.0.2",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^17.9.0",
-    "eslint-plugin-promise": "^6.4.0",
-    "husky": "^9.0.11",
+    "eslint-plugin-n": "^17.10.1",
+    "eslint-plugin-promise": "^7.0.0",
+    "husky": "^9.1.4",
     "lint-staged": "^15.2.7",
     "pinst": "^3.0.0",
-    "prettier": "^3.3.2",
-    "tap": "^20.0.3"
+    "prettier": "^3.3.3",
+    "tap": "^21.0.0"
   },
   "scripts": {
-    "prepare": "husky install",
+    "prepare": "husky",
     "prepublishOnly": "pinst --disable",
     "postpublish": "pinst --enable",
     "test": "tap test",

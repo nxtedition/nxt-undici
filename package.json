@@ -9,6 +9,7 @@
     "lib/*"
   ],
   "dependencies": {
+    "buffer-json": "^2.0.0",
     "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",

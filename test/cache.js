@@ -40,7 +40,7 @@ function exampleEntries() {
         ['User-Agent', 'Mozilla/5.0'],
       ],
       size: 100,
-      expires: Date.now() + 31556952000,
+      expires: Date.now() + 31556952001 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -56,7 +56,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      expires: Date.now() + 31556952000,
+      expires: Date.now() + 31556952002 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -73,7 +73,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      expires: Date.now() + 31556952000,
+      expires: Date.now() + 31556952003 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -98,7 +98,6 @@ function exampleEntries() {
 
 function dbsetup(populate = true) {
   const cache = new CacheStore()
-  cache.deleteAll()
 
   if (populate) {
     exampleEntries().forEach((i) => cache.set('GET:/', i))
@@ -107,8 +106,7 @@ function dbsetup(populate = true) {
   return cache
 }
 
-// This test will not always pass because of different execution times of operations in the in-memory database each time.
-test('If no matching entry found, store the response in cache. Else return a matching entry.', async (t) => {
+test('If no matching entry found, store the response in cache. Else return a matching entry.', (t) => {
   t.plan(4)
   const server = createServer((req, res) => {
     res.writeHead(307, {
@@ -170,11 +168,11 @@ test('If no matching entry found, store the response in cache. Else return a mat
     // and after a cached entry was used as a response.
     t.equal(cacheLength3, cacheLength2)
 
-    cache.database.close()
+    cache.close()
   })
 })
 
-test('Responses with header Vary: * should not be cached', async (t) => {
+test('Responses with header Vary: * should not be cached', (t) => {
   t.plan(2)
   const server = createServer((req, res) => {
     res.writeHead(307, {
@@ -218,78 +216,65 @@ test('Responses with header Vary: * should not be cached', async (t) => {
 
     t.equal(cacheLength2, cacheLength1)
 
-    cache.database.close()
+    cache.close()
   })
 })
 
-test('Store 307-status-responses that happen to be dependent on the Range header', async (t) => {
-  t.plan(5)
+test('307-Redirect Vary on Host, save to cache, fetch from cache', (t) => {
+  t.plan(3)
   const server = createServer((req, res) => {
     res.writeHead(307, {
-      Vary: 'Origin2, User-Agent, Accept',
+      Vary: 'Host',
       'Cache-Control': 'public, immutable',
-      'Content-Length': 4,
+      'Content-Length': 3,
       'Content-Type': 'text/html',
-      Connection: 'close',
-      Location: 'http://www.google.com/',
+      Connection: 'keep-alive',
+      Location: 'http://www.blankwebsite.com/',
+      datenow: Date.now(),
     })
-    res.end('foob')
+    res.end('asd')
   })
 
   t.teardown(server.close.bind(server))
 
-  const cache = dbsetup(false)
-
-  const cacheLength1 = cache.get('GET:/').length
-
   server.listen(0, async () => {
-    const serverPort = server.address().port
-
-    const request1 = undici.request(`http://0.0.0.0:${serverPort}`, {
+    const response1 = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache,
-      headers: {
-        range: 'bytes=0-999',
-      },
-      testing: 'testing 1',
+      cache: true,
     })
-
-    // response not found in cache, response should be added to cache.
-    const response1 = await request1
     let str1 = ''
     for await (const chunk of response1.body) {
       str1 += chunk
     }
-    const cacheLength2 = cache.get('GET:/').length
 
-    // should return the default server response
-    t.equal(str1, 'foob')
-    t.equal(cacheLength1, 0)
-    t.equal(cacheLength2, 1)
+    t.equal(str1, 'asd')
 
-    const request2 = undici.request(`http://0.0.0.0:${serverPort}`, {
+    const response2 = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache,
-      headers: {
-        range: 'bytes=0-999',
-      },
-      testing: 'testing 2',
+      cache: true,
     })
-
-    // response found in cache, response should be fetched from cache.
-    const response2 = await request2
-
     let str2 = ''
     for await (const chunk of response2.body) {
       str2 += chunk
     }
 
-    const cacheLength3 = cache.get('GET:/').length
-
-    // should return the cached response
-    t.equal(str2, 'foob')
-    t.equal(cacheLength3, 1)
-
-    cache.database.close()
+    t.equal(response1.headers.datenow, response2.headers.datenow)
+    t.equal(str2, 'asd')
   })
+})
+
+test('Cache purging based on its maxSize', (t) => {
+  t.plan(1)
+  const cache = new CacheStore(':memory:', { maxSize: 500 })
+
+  exampleEntries()
+    .concat(exampleEntries())
+    .concat(exampleEntries())
+    .concat(exampleEntries())
+    .forEach((i) => cache.set('GET:/', i))
+
+  const rows = cache.get('GET:/')
+  const totalSize = rows.reduce((acc, r) => r.size + acc, 0)
+
+  t.equal(totalSize, 400)
 })

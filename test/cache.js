@@ -40,7 +40,7 @@ function exampleEntries() {
         ['User-Agent', 'Mozilla/5.0'],
       ],
       size: 100,
-      expires: Date.now() + 31556952001 + Math.floor(Math.random() * 100),
+      expires: Date.now() * 2 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -56,7 +56,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      expires: Date.now() + 31556952002 + Math.floor(Math.random() * 100),
+      expires: Date.now() * 2 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -73,7 +73,7 @@ function exampleEntries() {
         ['origin2', 'www.google.com/images'],
       ],
       size: 100,
-      expires: Date.now() + 31556952003 + Math.floor(Math.random() * 100),
+      expires: Date.now() * 2 + Math.floor(Math.random() * 100),
     },
     {
       data: {
@@ -278,3 +278,83 @@ test('Cache purging based on its maxSize', (t) => {
 
   t.equal(totalSize, 400)
 })
+
+test('Cache #maxTTL overwriting entries ttl', (t) => {
+  t.plan(1)
+
+  const day = 1000 * 60 * 60 * 24
+  const cache = new CacheStore(':memory:', { maxTTL: day })
+  exampleEntries().forEach((i) => cache.set('GET:/', i))
+
+  const row = cache.get('GET:/')[0]
+  const rowExpires = Math.floor(row.expires / 1000)
+  const maxExpires = Math.floor((Date.now() + day) / 1000)
+
+  t.equal(rowExpires, maxExpires)
+})
+
+// test('200-OK, save to cache, fetch from cache', (t) => {
+//   t.plan(4)
+//   const server = createServer((req, res) => {
+//     res.writeHead(307, {
+//       Vary: 'Origin2, User-Agent, Accept',
+//       'Cache-Control': 'public, immutable',
+//       'Content-Length': 4,
+//       'Content-Type': 'text/html',
+//       Connection: 'close',
+//       Location: 'http://www.google.com/',
+//     })
+//     res.end('foob')
+//   })
+
+//   t.teardown(server.close.bind(server))
+
+//   const cache = dbsetup()
+
+//   const cacheLength1 = cache.get('GET:/').length
+
+//   server.listen(0, async () => {
+//     const serverPort = server.address().port
+//     // response not found in cache, response should be added to cache.
+//     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
+//       dispatcher: new undici.Agent().compose(interceptors.cache()),
+//       cache,
+//     })
+//     let str = ''
+//     for await (const chunk of response.body) {
+//       str += chunk
+//     }
+//     const cacheLength2 = cache.get('GET:/').length
+
+//     // should return the default server response
+//     t.equal(str, 'foob')
+
+//     t.equal(cacheLength2, cacheLength1 + 1)
+
+//     // response found in cache, return cached response.
+//     const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
+//       dispatcher: new undici.Agent().compose(interceptors.cache()),
+//       headers: {
+//         Accept: 'application/txt',
+//         'User-Agent': 'Chrome',
+//         origin2: 'www.google.com/images',
+//       },
+//       cache,
+//     })
+//     let str2 = ''
+//     for await (const chunk of response2.body) {
+//       str2 += chunk
+//     }
+
+//     const cacheLength3 = cache.get('GET:/').length
+
+//     // should return the body from the cached entry
+//     t.equal(str2, 'asd2')
+
+//     // cache should still have the same number of entries before
+//     // and after a cached entry was used as a response.
+//     t.equal(cacheLength3, cacheLength2)
+
+//     cache.close()
+//   })
+// })

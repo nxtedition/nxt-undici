@@ -9,11 +9,11 @@
     "lib/*"
   ],
   "dependencies": {
+    "better-sqlite3": "^11.2.1",
     "buffer-json": "^2.0.0",
     "cache-control-parser": "^2.0.6",
     "cacheable-lookup": "^7.0.0",
     "http-errors": "^2.0.0",
-    "sqlite3": "^5.1.7",
     "undici": "^6.19.5"
   },
   "devDependencies": {

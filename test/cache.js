@@ -96,14 +96,16 @@ function exampleEntries() {
   return entries
 }
 
-function dbsetup(populate = true) {
-  const cache = new CacheStore()
-
-  if (populate) {
-    exampleEntries().forEach((i) => cache.set('GET:/', i))
-  }
-
+function dbsetup() {
+  const cache = new CacheStore(':memory:')
   return cache
+}
+
+function seedCache(cache) {
+  for (const entry of exampleEntries()) {
+    cache.set('GET:/', entry)
+  }
+  return exampleEntries().length
 }
 
 test('If no matching entry found, store the response in cache. Else return a matching entry.', (t) => {
@@ -116,6 +118,7 @@ test('If no matching entry found, store the response in cache. Else return a mat
       'Content-Type': 'text/html',
       Connection: 'close',
       Location: 'http://www.google.com/',
+      datenow: Date.now(),
     })
     res.end('foob')
   })
@@ -124,25 +127,24 @@ test('If no matching entry found, store the response in cache. Else return a mat
 
   const cache = dbsetup()
 
-  const cacheLength1 = cache.get('GET:/').length
-
   server.listen(0, async () => {
     const serverPort = server.address().port
     // response not found in cache, response should be added to cache.
-    const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
+    const response1 = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
       cache,
     })
     let str = ''
-    for await (const chunk of response.body) {
+    for await (const chunk of response1.body) {
       str += chunk
     }
-    const cacheLength2 = cache.get('GET:/').length
+    const cacheLength1 = cache.get('GET:/').length
+    const added = seedCache(cache) - 1 // one is purged quickly due to ttl
 
     // should return the default server response
     t.equal(str, 'foob')
 
-    t.equal(cacheLength2, cacheLength1 + 1)
+    t.equal(cacheLength1, 1)
 
     // response found in cache, return cached response.
     const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
@@ -154,19 +156,15 @@ test('If no matching entry found, store the response in cache. Else return a mat
       },
       cache,
     })
-    let str2 = ''
-    for await (const chunk of response2.body) {
-      str2 += chunk
-    }
 
-    const cacheLength3 = cache.get('GET:/').length
+    const cacheLength2 = cache.get('GET:/').length
 
-    // should return the body from the cached entry
-    t.equal(str2, 'asd2')
+    // should return the same response
+    t.equal(response1.datenow, response2.datenow)
 
     // cache should still have the same number of entries before
     // and after a cached entry was used as a response.
-    t.equal(cacheLength3, cacheLength2)
+    t.equal(cacheLength2, cacheLength1 + added)
 
     cache.close()
   })
@@ -188,7 +186,7 @@ test('Responses with header Vary: * should not be cached', (t) => {
 
   t.teardown(server.close.bind(server))
 
-  const cache = dbsetup(false)
+  const cache = dbsetup()
 
   const cacheLength1 = cache.get('GET:/').length
 
@@ -198,7 +196,7 @@ test('Responses with header Vary: * should not be cached', (t) => {
     // But the server returns Vary: *, and thus shouldn't be cached.
     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
-      cache,
+      cache: true, // use the CacheHandler's existing CacheStore created earlier with dbsetup().
       headers: {
         Accept: 'application/txt',
         'User-Agent': 'Chrome',
@@ -237,6 +235,7 @@ test('307-Redirect Vary on Host, save to cache, fetch from cache', (t) => {
 
   t.teardown(server.close.bind(server))
 
+  // entry not found, save to cache
   server.listen(0, async () => {
     const response1 = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
@@ -249,6 +248,7 @@ test('307-Redirect Vary on Host, save to cache, fetch from cache', (t) => {
 
     t.equal(str1, 'asd')
 
+    // entry found, fetch from cache
     const response2 = await undici.request(`http://0.0.0.0:${server.address().port}`, {
       dispatcher: new undici.Agent().compose(interceptors.cache()),
       cache: true,
@@ -271,15 +271,18 @@ test('Cache purging based on its maxSize', (t) => {
     .concat(exampleEntries())
     .concat(exampleEntries())
     .concat(exampleEntries())
+    .concat(exampleEntries())
+    .concat(exampleEntries())
+    .concat(exampleEntries()) // total size inserted: 2100
     .forEach((i) => cache.set('GET:/', i))
 
   const rows = cache.get('GET:/')
   const totalSize = rows.reduce((acc, r) => r.size + acc, 0)
 
-  t.equal(totalSize, 400)
+  t.equal(totalSize, 500)
 })
 
-test('Cache #maxTTL overwriting entries ttl', (t) => {
+test('Cache #maxTTL overwriting ttl of individual entries', (t) => {
   t.plan(1)
 
   const day = 1000 * 60 * 60 * 24
@@ -293,68 +296,65 @@ test('Cache #maxTTL overwriting entries ttl', (t) => {
   t.equal(rowExpires, maxExpires)
 })
 
-// test('200-OK, save to cache, fetch from cache', (t) => {
-//   t.plan(4)
-//   const server = createServer((req, res) => {
-//     res.writeHead(307, {
-//       Vary: 'Origin2, User-Agent, Accept',
-//       'Cache-Control': 'public, immutable',
-//       'Content-Length': 4,
-//       'Content-Type': 'text/html',
-//       Connection: 'close',
-//       Location: 'http://www.google.com/',
-//     })
-//     res.end('foob')
-//   })
+test('200-OK, save to cache, fetch from cache', (t) => {
+  t.plan(4)
+  const server = createServer((req, res) => {
+    res.writeHead(200, {
+      Vary: 'User-Agent, Accept',
+      'Cache-Control': 'public, immutable',
+      'Content-Length': 4,
+      'Content-Type': 'text/html',
+      Connection: 'close',
+      Location: 'http://www.google.com/',
+      datenow: Date.now(),
+    })
+    res.end('foob')
+  })
 
-//   t.teardown(server.close.bind(server))
+  t.teardown(server.close.bind(server))
 
-//   const cache = dbsetup()
+  const cache = dbsetup()
 
-//   const cacheLength1 = cache.get('GET:/').length
+  server.listen(0, async () => {
+    const serverPort = server.address().port
+    // response not found in cache, response should be added to cache.
+    const response1 = await undici.request(`http://0.0.0.0:${serverPort}`, {
+      dispatcher: new undici.Agent().compose(interceptors.cache()),
+      cache,
+    })
+    let str = ''
+    for await (const chunk of response1.body) {
+      str += chunk
+    }
 
-//   server.listen(0, async () => {
-//     const serverPort = server.address().port
-//     // response not found in cache, response should be added to cache.
-//     const response = await undici.request(`http://0.0.0.0:${serverPort}`, {
-//       dispatcher: new undici.Agent().compose(interceptors.cache()),
-//       cache,
-//     })
-//     let str = ''
-//     for await (const chunk of response.body) {
-//       str += chunk
-//     }
-//     const cacheLength2 = cache.get('GET:/').length
+    const cacheLength1 = cache.get('GET:/').length
 
-//     // should return the default server response
-//     t.equal(str, 'foob')
+    t.equal(cacheLength1, 1)
 
-//     t.equal(cacheLength2, cacheLength1 + 1)
+    // should return the default server response
+    t.equal(str, 'foob')
 
-//     // response found in cache, return cached response.
-//     const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
-//       dispatcher: new undici.Agent().compose(interceptors.cache()),
-//       headers: {
-//         Accept: 'application/txt',
-//         'User-Agent': 'Chrome',
-//         origin2: 'www.google.com/images',
-//       },
-//       cache,
-//     })
-//     let str2 = ''
-//     for await (const chunk of response2.body) {
-//       str2 += chunk
-//     }
+    const added = seedCache(cache) - 1 // (one is purged quickly due to ttl)
 
-//     const cacheLength3 = cache.get('GET:/').length
+    // response found in cache, return cached response.
+    const response2 = await undici.request(`http://0.0.0.0:${serverPort}`, {
+      dispatcher: new undici.Agent().compose(interceptors.cache()),
+      headers: {
+        Accept: 'application/txt',
+        'User-Agent': 'Chrome',
+      },
+      cache,
+    })
 
-//     // should return the body from the cached entry
-//     t.equal(str2, 'asd2')
+    const cacheLength2 = cache.get('GET:/').length
 
-//     // cache should still have the same number of entries before
-//     // and after a cached entry was used as a response.
-//     t.equal(cacheLength3, cacheLength2)
+    // should return the response from the cached entry
+    t.equal(response2.datenow, response1.datenow)
 
-//     cache.close()
-//   })
-// })
+    // cache should still have the same number of entries before
+    // and after a cached entry was used as a response.
+    t.equal(cacheLength2, added + cacheLength1)
+
+    cache.close()
+  })
+})

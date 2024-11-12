@@ -11,16 +11,16 @@
   "dependencies": {
     "cache-control-parser": "^2.0.6",
     "http-errors": "^2.0.0",
-    "lru-cache": "^11.0.1",
-    "undici": "^6.19.8"
+    "lru-cache": "^11.0.2",
+    "undici": "^6.20.1"
   },
   "devDependencies": {
-    "@types/node": "^22.7.4",
+    "@types/node": "^22.9.0",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-n": "^17.10.3",
+    "eslint-plugin-n": "^17.13.1",
     "eslint-plugin-promise": "^7.1.0",
     "husky": "^9.1.6",
     "lint-staged": "^15.2.10",

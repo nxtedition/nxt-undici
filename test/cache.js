@@ -1,7 +1,7 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
+import { request, interceptors, compose } from '../lib/index.js'
 import undici from 'undici'
-import { interceptors } from '../lib/index.js'
 
 test('cache request', (t) => {
   t.plan(1)
@@ -11,8 +11,8 @@ test('cache request', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const { body } = await undici.request(`http://0.0.0.0:${server.address().port}`, {
-      dispatcher: new undici.Agent().compose(interceptors.cache()),
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+      dispatcher: compose(new undici.Agent(), interceptors.cache()),
       cache: true,
     })
     let str = ''

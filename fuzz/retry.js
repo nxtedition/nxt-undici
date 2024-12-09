@@ -1,9 +1,9 @@
-const { createServer } = require('http')
-const { request } = require('../')
-const send = require('send')
-const fs = require('fs')
-const assert = require('assert')
-const crypto = require('crypto')
+import { createServer } from 'http'
+import { request } from '../'
+import send from 'send'
+import fs from 'fs'
+import assert from 'assert'
+import crypto from 'crypto'
 
 const filePath = 'some file path'
 

@@ -17,15 +17,12 @@
   "devDependencies": {
     "@types/node": "^22.10.1",
     "eslint": "^9.16.0",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-config-standard": "^17.0.0",
-    "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-n": "^17.14.0",
-    "eslint-plugin-promise": "^7.2.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.10",
     "pinst": "^3.0.0",
     "prettier": "^3.4.1",
+    "send": "^1.1.0",
     "tap": "^21.0.1"
   },
   "scripts": {
@@ -44,27 +41,5 @@
     "printWidth": 100,
     "semi": false,
     "singleQuote": true
-  },
-  "eslintConfig": {
-    "parserOptions": {
-      "ecmaFeatures": {
-        "ecmaVersion": 2020
-      }
-    },
-    "extends": [
-      "standard",
-      "prettier",
-      "prettier/prettier"
-    ],
-    "rules": {
-      "quotes": [
-        "error",
-        "single",
-        {
-          "avoidEscape": true,
-          "allowTemplateLiterals": true
-        }
-      ]
-    }
   }
 }

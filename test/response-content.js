@@ -17,6 +17,7 @@ test('put & Readable', (t) => {
     try {
       const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
         method: 'PUT',
+        verify: true,
         body: async function () {
           const src = new Readable({ read() {} })
           setTimeout(() => {
@@ -49,6 +50,7 @@ test('get', (t) => {
     try {
       const { body } = await request(`http://0.0.0.0:${port}`, {
         method: 'GET',
+        verify: true,
       })
       await body.text()
     } catch (err) {
@@ -78,6 +80,7 @@ test('put & get', (t) => {
     const port = server.address().port
     try {
       const { body } = await request(`http://0.0.0.0:${port}`, {
+        verify: true,
         method: 'PUT',
         body: async function () {
           const { body } = await request(`http://0.0.0.0:${port}`)

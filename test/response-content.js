@@ -83,7 +83,7 @@ test('put & get', (t) => {
         verify: true,
         method: 'PUT',
         body: async function () {
-          const { body } = await request(`http://0.0.0.0:${port}`)
+          const { body } = await request(`http://0.0.0.0:${port}`, { verify: true })
           return body
         },
       })

@@ -9,7 +9,7 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^9.0.1",
+    "@nxtedition/undici": "^9.0.2",
     "cache-control-parser": "^2.0.6",
     "http-errors": "^2.0.0",
     "lru-cache": "^11.0.2"

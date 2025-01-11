@@ -1,7 +1,7 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { request, interceptors, compose } from '../lib/index.js'
-import undici from 'undici'
+import undici from '@nxtedition/undici'
 
 test('cache request', (t) => {
   t.plan(1)

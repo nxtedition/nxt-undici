@@ -9,17 +9,17 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^9.0.2",
+    "@nxtedition/undici": "^9.0.3",
     "cache-control-parser": "^2.0.6",
     "http-errors": "^2.0.0",
     "lru-cache": "^11.0.2"
   },
   "devDependencies": {
-    "@types/node": "^22.10.1",
+    "@types/node": "^22.10.7",
     "eslint": "^9.16.0",
     "eslint-plugin-n": "^17.14.0",
     "husky": "^9.1.7",
-    "lint-staged": "^15.2.10",
+    "lint-staged": "^15.4.1",
     "pinst": "^3.0.0",
     "prettier": "^3.4.1",
     "send": "^1.1.0",

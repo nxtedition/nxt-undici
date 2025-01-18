@@ -11,8 +11,7 @@
   "dependencies": {
     "@nxtedition/undici": "^9.0.3",
     "cache-control-parser": "^2.0.6",
-    "http-errors": "^2.0.0",
-    "lru-cache": "^11.0.2"
+    "http-errors": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",

@@ -22,7 +22,8 @@
     "pinst": "^3.0.0",
     "prettier": "^3.4.1",
     "send": "^1.1.0",
-    "tap": "^21.0.1"
+    "tap": "^21.0.1",
+    "undici-types": "^7.2.3"
   },
   "scripts": {
     "prepare": "husky",

@@ -9,10 +9,9 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^10.0.2",
+    "@nxtedition/undici": "^10.1.2",
     "cache-control-parser": "^2.0.6",
-    "http-errors": "^2.0.0",
-    "undici": "^7.3.0"
+    "http-errors": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",

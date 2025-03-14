@@ -9,21 +9,21 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/undici": "^10.1.2",
+    "@nxtedition/undici": "^11.0.0",
     "cache-control-parser": "^2.0.6",
     "http-errors": "^2.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.7",
-    "eslint": "^9.16.0",
-    "eslint-plugin-n": "^17.14.0",
+    "@types/node": "^22.13.10",
+    "eslint": "^9.22.0",
+    "eslint-plugin-n": "^17.16.2",
     "husky": "^9.1.7",
-    "lint-staged": "^15.4.1",
+    "lint-staged": "^15.5.0",
     "pinst": "^3.0.0",
-    "prettier": "^3.4.1",
+    "prettier": "^3.5.3",
     "send": "^1.1.0",
-    "tap": "^21.0.1",
-    "undici-types": "^7.2.3"
+    "tap": "^21.1.0",
+    "undici-types": "^7.5.0"
   },
   "scripts": {
     "prepare": "husky",

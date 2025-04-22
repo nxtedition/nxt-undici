@@ -11,6 +11,7 @@
   "dependencies": {
     "@nxtedition/undici": "^11.0.0",
     "cache-control-parser": "^2.0.6",
+    "fast-querystring": "^1.1.2",
     "http-errors": "^2.0.0"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/scheduler": "^1.0.5",
+    "@nxtedition/scheduler": "^2.0.1",
     "@nxtedition/undici": "^11.1.1",
     "cache-control-parser": "^2.0.6",
     "fast-querystring": "^1.1.2",

@@ -9,7 +9,7 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/scheduler": "^2.0.1",
+    "@nxtedition/scheduler": "^3.0.0",
     "@nxtedition/undici": "^11.1.1",
     "cache-control-parser": "^2.0.6",
     "fast-querystring": "^1.1.2",
@@ -17,7 +17,7 @@
     "xxhash-wasm": "^1.1.0"
   },
   "devDependencies": {
-    "@types/node": "^25.0.10",
+    "@types/node": "^25.1.0",
     "eslint": "^9.39.2",
     "eslint-plugin-n": "^17.23.2",
     "husky": "^9.1.7",
@@ -26,7 +26,7 @@
     "prettier": "^3.8.1",
     "send": "^1.2.1",
     "tap": "^21.5.0",
-    "undici-types": "^7.19.1"
+    "undici-types": "^7.19.2"
   },
   "scripts": {
     "prepare": "husky",

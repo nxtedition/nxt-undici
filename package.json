@@ -4,6 +4,7 @@
   "license": "MIT",
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "type": "module",
   "files": [
     "lib/*"
@@ -17,7 +18,7 @@
     "xxhash-wasm": "^1.1.0"
   },
   "devDependencies": {
-    "@types/node": "^25.2.0",
+    "@types/node": "^25.2.1",
     "eslint": "^9.39.2",
     "eslint-plugin-n": "^17.23.2",
     "husky": "^9.1.7",

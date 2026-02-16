@@ -11,7 +11,9 @@
       "Bash(then)",
       "Bash(echo:*)",
       "Bash(else)",
-      "Bash(printf:*)"
+      "Bash(printf:*)",
+      "Bash(gh api:*)",
+      "Bash(node --input-type=module -e:*)"
     ]
   }
 }

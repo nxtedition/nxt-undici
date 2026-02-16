@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/ronagy/GitHub/nxt-undici log --oneline -20)",
+      "Bash(npm test:*)",
+      "Bash(npx tap:*)",
+      "Bash(node --test:*)",
+      "Bash(for f in /Users/ronagy/GitHub/nxt-undici/test/*.js /Users/ronagy/GitHub/nxt-undici/test/utils/*.js)",
+      "Bash(do)",
+      "Bash(if head:*)",
+      "Bash(then)",
+      "Bash(echo:*)",
+      "Bash(else)",
+      "Bash(printf:*)"
+    ]
+  }
+}

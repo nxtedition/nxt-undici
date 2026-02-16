@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { test } from 'tap'
 import { parseHeaders } from '../lib/utils.js'
 

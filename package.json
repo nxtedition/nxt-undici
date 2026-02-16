@@ -17,12 +17,13 @@
     "xxhash-wasm": "^1.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.2.3",
     "eslint": "^10.0.0",
     "eslint-plugin-n": "^17.24.0",
     "husky": "^9.1.7",
-    "pino": "^9.6.0",
     "lint-staged": "^16.2.7",
+    "pino": "^9.6.0",
     "pinst": "^3.0.0",
     "prettier": "^3.8.1",
     "send": "^1.2.1",
@@ -33,7 +34,8 @@
     "prepare": "husky",
     "prepublishOnly": "pinst --disable",
     "postpublish": "pinst --enable",
-    "test": "tap test"
+    "test": "tap test",
+    "test:coverage": "tap test --coverage-report=text --coverage-report=html"
   },
   "lint-staged": {
     "*.{js,jsx,md,ts}": [

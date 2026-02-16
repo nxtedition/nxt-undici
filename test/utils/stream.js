@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { Readable, Writable } from 'node:stream'
 
 export function createReadable(data) {

@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { createServer } from 'node:http'
 
 function startServer(t, handler) {

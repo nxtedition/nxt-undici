@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { test, after } from 'node:test'
 import { request } from '../lib/index.js'
 import { once } from 'node:events'

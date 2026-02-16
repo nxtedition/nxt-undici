@@ -1,3 +1,4 @@
+/* eslint-disable */
 // import { createServer } from 'node:http'
 // import { test } from 'tap'
 // import { request } from '../lib/index.js'

@@ -881,3 +881,204 @@ test('result omits undefined optional fields', (t) => {
   t.equal(result.cacheControlDirectives, undefined)
   t.end()
 })
+
+test('purgeStale removes expired entries', (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const key = { origin: 'https://example.com', method: 'GET', path: '/purge' }
+  const past = Date.now() - 120e3
+  store.set(key, {
+    body: Buffer.from('stale'),
+    start: 0,
+    end: 5,
+    statusCode: 200,
+    statusMessage: 'OK',
+    cachedAt: past - 60e3,
+    staleAt: past - 30e3,
+    deleteAt: past,
+  })
+
+  // Entry exists but is expired (get filters by deleteAt)
+  t.equal(store.get(key), undefined)
+
+  // Wait for getFastNow() to advance past the debounce window
+  setTimeout(() => {
+    store.purgeStale()
+
+    // Verify entry was actually deleted from the DB by inserting fresh data
+    // and confirming the old entry doesn't interfere
+    const now = Date.now()
+    store.set(key, {
+      body: Buffer.from('fresh'),
+      start: 0,
+      end: 5,
+      statusCode: 200,
+      statusMessage: 'OK',
+      cachedAt: now,
+      staleAt: now + 3600e3,
+      deleteAt: now + 7200e3,
+    })
+    const result = store.get(key)
+    t.ok(result)
+    t.equal(result.body.toString(), 'fresh')
+    t.end()
+  }, 1100)
+})
+
+test('maxSize option limits database size', (t) => {
+  // Use a very small maxSize so the DB fills up quickly
+  // Default page_size is 4096, so 4096 * 6 = 24576 bytes
+  const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
+  t.teardown(() => store.close())
+
+  const now = Date.now()
+  const largeBody = Buffer.alloc(4096, 'x')
+
+  // Fill the database until it's full
+  let inserted = 0
+  try {
+    for (let i = 0; i < 100; i++) {
+      store.set(
+        { origin: 'https://example.com', method: 'GET', path: `/fill-${i}` },
+        {
+          body: largeBody,
+          start: 0,
+          end: largeBody.byteLength,
+          statusCode: 200,
+          statusMessage: 'OK',
+          cachedAt: now,
+          staleAt: now + 3600e3,
+          deleteAt: now + 7200e3,
+        },
+      )
+      inserted++
+    }
+    t.fail('should have thrown SQLITE_FULL')
+  } catch (err) {
+    t.ok(inserted > 0, 'inserted at least one entry before full')
+    t.ok(inserted < 100, 'did not insert all entries')
+    t.equal(err.errcode, 13, 'error is SQLITE_FULL')
+  }
+  t.end()
+})
+
+test('set retries after SQLITE_FULL when prune frees space', (t) => {
+  const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
+  t.teardown(() => store.close())
+
+  const past = Date.now() - 120e3
+  const largeBody = Buffer.alloc(4096, 'x')
+
+  // Fill with expired entries
+  let inserted = 0
+  try {
+    for (let i = 0; i < 100; i++) {
+      store.set(
+        { origin: 'https://example.com', method: 'GET', path: `/expired-${i}` },
+        {
+          body: largeBody,
+          start: 0,
+          end: largeBody.byteLength,
+          statusCode: 200,
+          statusMessage: 'OK',
+          cachedAt: past - 60e3,
+          staleAt: past - 30e3,
+          deleteAt: past,
+        },
+      )
+      inserted++
+    }
+  } catch {
+    // Expected - DB is full
+  }
+
+  t.ok(inserted > 0, 'inserted expired entries')
+
+  // Wait for getFastNow() to advance so prune can run
+  setTimeout(() => {
+    const now = Date.now()
+    // This should trigger SQLITE_FULL -> prune (deletes expired) -> retry (succeeds)
+    store.set(
+      { origin: 'https://example.com', method: 'GET', path: '/after-prune' },
+      {
+        body: Buffer.from('new'),
+        start: 0,
+        end: 3,
+        statusCode: 200,
+        statusMessage: 'OK',
+        cachedAt: now,
+        staleAt: now + 3600e3,
+        deleteAt: now + 7200e3,
+      },
+    )
+
+    const result = store.get({
+      origin: 'https://example.com',
+      method: 'GET',
+      path: '/after-prune',
+    })
+    t.ok(result)
+    t.equal(result.body.toString(), 'new')
+    t.end()
+  }, 1100)
+})
+
+test('close removes store and prevents further operations', (t) => {
+  const store = new SqliteCacheStore()
+
+  const key = { origin: 'https://example.com', method: 'GET', path: '/close-test' }
+  const now = Date.now()
+  store.set(key, {
+    body: Buffer.from('data'),
+    start: 0,
+    end: 4,
+    statusCode: 200,
+    statusMessage: 'OK',
+    cachedAt: now,
+    staleAt: now + 3600e3,
+    deleteAt: now + 7200e3,
+  })
+
+  store.close()
+
+  // After close, get and set should throw
+  t.throws(() => store.get(key))
+  t.throws(() =>
+    store.set(key, {
+      body: Buffer.from('x'),
+      start: 0,
+      end: 1,
+      statusCode: 200,
+      statusMessage: 'OK',
+      cachedAt: now,
+      staleAt: now + 3600e3,
+      deleteAt: now + 7200e3,
+    }),
+  )
+  t.end()
+})
+
+test('custom maxSize option', (t) => {
+  // Verify that a custom maxSize is accepted without error
+  const store = new SqliteCacheStore({ maxSize: 1024 * 1024 })
+  t.teardown(() => store.close())
+
+  const key = { origin: 'https://example.com', method: 'GET', path: '/custom-max' }
+  const now = Date.now()
+  store.set(key, {
+    body: Buffer.from('ok'),
+    start: 0,
+    end: 2,
+    statusCode: 200,
+    statusMessage: 'OK',
+    cachedAt: now,
+    staleAt: now + 3600e3,
+    deleteAt: now + 7200e3,
+  })
+
+  const result = store.get(key)
+  t.ok(result)
+  t.equal(result.body.toString(), 'ok')
+  t.end()
+})

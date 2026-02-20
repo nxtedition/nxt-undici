@@ -11,6 +11,13 @@ export interface URLObject {
   search?: string | null
 }
 
+export interface BodyReadable extends Readable {
+  text(): Promise<string>
+  json(): Promise<unknown>
+  arrayBuffer(): Promise<ArrayBuffer>
+  blob(): Promise<Blob>
+}
+
 export type URLLike = string | URL | URLObject
 
 export interface Dispatcher {
@@ -67,6 +74,7 @@ export interface DispatchOptions {
   bodyTimeout?: number | null
   idempotent?: boolean | null
   typeOfService?: number | null
+  dispatcher?: Dispatcher | null
   retry?: RetryOptions | number | boolean | RetryFn | null
   proxy?: ProxyOptions | boolean | null
   cache?: CacheOptions | boolean | null
@@ -192,7 +200,7 @@ export interface RequestOptions extends DispatchOptions {
 export interface ResponseData {
   statusCode: number
   headers: Record<string, string | string[] | undefined>
-  body: Readable
+  body: BodyReadable
 }
 
 export function request(

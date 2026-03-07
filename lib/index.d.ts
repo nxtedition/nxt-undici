@@ -17,6 +17,7 @@ export interface BodyReadable extends Readable {
   json(): Promise<unknown>
   arrayBuffer(): Promise<ArrayBuffer>
   blob(): Promise<Blob>
+  dump(): Promise<void>
 }
 
 export type URLLike = string | URL | URLObject

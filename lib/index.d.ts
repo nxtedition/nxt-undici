@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream'
+import type { Priority } from '@nxtedition/scheduler'
 
 export interface URLObject {
   origin?: string | null
@@ -85,18 +86,7 @@ export interface DispatchOptions {
   logger?: LoggerLike | null
   dns?: DnsOptions | boolean | null
   connect?: Record<string, unknown> | null
-  priority?:
-    | 0
-    | 1
-    | 2
-    | 'low'
-    | 'normal'
-    | 'high'
-    | 'lower'
-    | 'lowest'
-    | 'higher'
-    | 'highest'
-    | null
+  priority?: Priority | null
   lookup?: LookupFn | null
 }
 

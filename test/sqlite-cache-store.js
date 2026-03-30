@@ -278,6 +278,50 @@ test('set never throws on DB errors — emits process warning instead', (t) => {
   t.end()
 })
 
+// ---------------------------------------------------------------------------
+// Bug fix: re-cached entry must be returned, not the stale duplicate
+// ---------------------------------------------------------------------------
+
+test('re-caching same key returns the freshest entry (cachedAt DESC fix)', (t) => {
+  // With ORDER BY deleteAt ASC the old entry came first (it had a shorter TTL
+  // from the original cache-control), so get() would return stale data even
+  // though a fresh response had just been stored.
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const now = Date.now()
+  const key = makeKey({ path: '/revalidated' })
+
+  // First cache: short TTL, body = 'old'
+  store.set(
+    key,
+    makeValue({
+      body: Buffer.from('old'),
+      end: 3,
+      cachedAt: now - 5000,
+      staleAt: now - 1000,
+      deleteAt: now + 1000, // expires soon — ORDER BY deleteAt ASC picks this first
+    }),
+  )
+
+  // Re-cache after revalidation: longer TTL, body = 'fresh'
+  store.set(
+    key,
+    makeValue({
+      body: Buffer.from('fresh'),
+      end: 5,
+      cachedAt: now,
+      staleAt: now + 3600e3,
+      deleteAt: now + 7200e3,
+    }),
+  )
+
+  const result = store.get(key)
+  t.ok(result)
+  t.equal(result.body.toString(), 'fresh', 'must return the most recently cached entry')
+  t.end()
+})
+
 test('set never throws when body is too large to fit even after eviction', (t) => {
   // When a body is larger than the entire DB capacity, the first insert fails
   // (SQLITE_FULL), eviction removes all existing rows, but the retry still fails

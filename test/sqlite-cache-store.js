@@ -28,11 +28,91 @@ function makeValue(overrides = {}) {
   }
 }
 
+// set() is async (batched via setImmediate). Call flush() before get() to
+// ensure the write has reached the database.
+const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+// ---------------------------------------------------------------------------
+// Async flush semantics
+// ---------------------------------------------------------------------------
+
+test('set() is immediately visible via get() before flush (batch read-through)', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  store.set(makeKey({ path: '/async' }), makeValue())
+  t.ok(store.get(makeKey({ path: '/async' })), 'visible in batch before flush')
+  await flush()
+  t.ok(store.get(makeKey({ path: '/async' })), 'still visible after flush (now in DB)')
+  t.end()
+})
+
+test('multiple sets in the same tick are batched into a single flush', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const now = Date.now()
+  for (let i = 0; i < 10; i++) {
+    store.set(
+      makeKey({ path: `/batch-${i}` }),
+      makeValue({ body: Buffer.from(`item${i}`), end: 4 + String(i).length, cachedAt: now + i }),
+    )
+  }
+  t.ok(store.get(makeKey({ path: '/batch-0' })), 'visible in batch before flush')
+  await flush()
+  for (let i = 0; i < 10; i++) {
+    t.ok(store.get(makeKey({ path: `/batch-${i}` })), `item ${i} visible after flush`)
+  }
+  t.end()
+})
+
+test('batch read-through: expired batch entry is not returned by get()', (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const past = Date.now() - 10000
+  store.set(
+    makeKey({ path: '/expired-batch' }),
+    makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }),
+  )
+  // Not flushed yet — entry lives only in the batch. It is expired, so get() must return undefined.
+  t.equal(
+    store.get(makeKey({ path: '/expired-batch' })),
+    undefined,
+    'expired batch entry must not be returned',
+  )
+  t.end()
+})
+
+test('batch read-through: vary matching is applied to batch entries', (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  store.set(
+    makeKey({ path: '/vary-batch', headers: { 'accept-encoding': 'gzip' } }),
+    makeValue({ vary: { 'accept-encoding': 'gzip' } }),
+  )
+  // Hit — same vary header value, not yet flushed.
+  t.ok(
+    store.get(makeKey({ path: '/vary-batch', headers: { 'accept-encoding': 'gzip' } })),
+    'vary match in batch',
+  )
+  // Miss — different value.
+  t.equal(
+    store.get(makeKey({ path: '/vary-batch', headers: { 'accept-encoding': 'br' } })),
+    undefined,
+    'vary mismatch in batch',
+  )
+  // Miss — header absent.
+  t.equal(store.get(makeKey({ path: '/vary-batch' })), undefined, 'missing header miss in batch')
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Basic get / set round-trip
 // ---------------------------------------------------------------------------
 
-test('basic get/set round-trip', (t) => {
+test('basic get/set round-trip', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -48,7 +128,7 @@ test('basic get/set round-trip', (t) => {
   })
 
   store.set(key, value)
-
+  await flush()
   const result = store.get(key)
   t.ok(result)
   t.equal(result.statusCode, 200)
@@ -66,7 +146,7 @@ test('get returns undefined for missing key', (t) => {
   t.end()
 })
 
-test('get returns undefined for expired entry', (t) => {
+test('get returns undefined for expired entry', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -75,6 +155,7 @@ test('get returns undefined for expired entry', (t) => {
     makeKey({ path: '/expired' }),
     makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }),
   )
+  await flush()
   t.equal(store.get(makeKey({ path: '/expired' })), undefined)
   t.end()
 })
@@ -83,30 +164,22 @@ test('get returns undefined for expired entry', (t) => {
 // Bug fix: expired entry must not block valid entries in the same result set
 // ---------------------------------------------------------------------------
 
-test('expired entry does not block valid entry with later deleteAt (bug fix)', (t) => {
-  // This test would have returned undefined with the old code because the
-  // first row (ordered by deleteAt ASC) was expired, and the loop did
-  // `return undefined` instead of `continue`.
+test('expired entry does not block valid entry with later deleteAt (bug fix)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   const now = Date.now()
   const past = now - 10000
 
-  // Insert two entries for the same URL/method.
-  // Entry 1: already expired, vary = gzip
   store.set(
     makeKey({ path: '/overlap', headers: { 'accept-encoding': 'gzip' } }),
     makeValue({
-      path: '/overlap',
       vary: { 'accept-encoding': 'gzip' },
       deleteAt: past,
       staleAt: past - 1,
       cachedAt: past - 2,
     }),
   )
-
-  // Entry 2: valid, vary = deflate (different — should still be found)
   store.set(
     makeKey({ path: '/overlap', headers: { 'accept-encoding': 'deflate' } }),
     makeValue({
@@ -119,17 +192,14 @@ test('expired entry does not block valid entry with later deleteAt (bug fix)', (
     }),
   )
 
-  // The expired entry comes first in ORDER BY deleteAt ASC.
-  // get() with deflate must skip the expired row and find the valid one.
+  await flush()
   const result = store.get(makeKey({ path: '/overlap', headers: { 'accept-encoding': 'deflate' } }))
-  t.ok(result, 'should find the valid entry despite the expired entry coming first')
+  t.ok(result, 'should find the valid entry despite expired entry existing')
   t.equal(result.body.toString(), 'deflate-body')
   t.end()
 })
 
-test('expired entry with matching vary must not be returned (bug fix)', (t) => {
-  // The old code would have caught the expiry via `return undefined` which was
-  // coincidentally correct for this shape, but we verify the SQL filter works.
+test('expired entry with matching vary must not be returned (bug fix)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -144,6 +214,7 @@ test('expired entry with matching vary must not be returned (bug fix)', (t) => {
     }),
   )
 
+  await flush()
   t.equal(store.get(makeKey({ headers: { 'accept-encoding': 'gzip' } })), undefined)
   t.end()
 })
@@ -152,19 +223,13 @@ test('expired entry with matching vary must not be returned (bug fix)', (t) => {
 // Bug fix: makeValueUrl — no double slash when path starts with "/"
 // ---------------------------------------------------------------------------
 
-test('path starting with / is stored and looked up correctly (no double-slash key)', (t) => {
+test('path starting with / is stored and looked up correctly (no double-slash key)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
-  // Insert with a path that has a leading slash (the common case).
   store.set(makeKey({ path: '/foo/bar' }), makeValue())
-
-  // Must find the entry — if there was a key mismatch (double slash on write,
-  // single slash on read, or vice versa) this would return undefined.
-  const result = store.get(makeKey({ path: '/foo/bar' }))
-  t.ok(result)
-
-  // A different path must NOT collide.
+  await flush()
+  t.ok(store.get(makeKey({ path: '/foo/bar' })))
   t.equal(store.get(makeKey({ path: '//foo/bar' })), undefined)
   t.end()
 })
@@ -177,7 +242,6 @@ test('assertCacheKey error message contains actual type, not "string"', (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
-  // Passing a number — printType should report "number", not "string".
   try {
     store.get(42)
     t.fail('should have thrown')
@@ -186,7 +250,6 @@ test('assertCacheKey error message contains actual type, not "string"', (t) => {
     t.notMatch(err.message, /^expected key to be object, got string/, 'must not say "string"')
   }
 
-  // Passing null — printType reports "null".
   try {
     store.get(null)
     t.fail('should have thrown')
@@ -198,41 +261,32 @@ test('assertCacheKey error message contains actual type, not "string"', (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// SQLITE_FULL handling — evict without debounce
+// SQLITE_FULL handling — batch flush with eviction
 // ---------------------------------------------------------------------------
 
-test('set succeeds immediately after SQLITE_FULL without sleep (evict fix)', (t) => {
-  // With the old code this required ~1100ms sleep because #prune was debounced.
-  // With #evictQuery there is no debounce; the retry is immediate.
+test('batch flush handles SQLITE_FULL with eviction and retries', async (t) => {
   const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
   t.teardown(() => store.close())
 
   const past = Date.now() - 120e3
-  const largeBody = Buffer.alloc(4096, 'x')
+  const largeBody = Buffer.alloc(1024, 'x')
 
-  // Fill with expired entries until SQLITE_FULL.
-  let inserted = 0
-  try {
-    for (let i = 0; i < 100; i++) {
-      store.set(
-        makeKey({ path: `/expired-${i}` }),
-        makeValue({
-          body: largeBody,
-          end: largeBody.byteLength,
-          deleteAt: past,
-          staleAt: past - 1,
-          cachedAt: past - 2,
-        }),
-      )
-      inserted++
-    }
-  } catch {
-    // Expected — DB is full.
+  // Fill DB with expired entries.
+  for (let i = 0; i < 20; i++) {
+    store.set(
+      makeKey({ path: `/fill-${i}` }),
+      makeValue({
+        body: largeBody,
+        end: largeBody.byteLength,
+        deleteAt: past,
+        staleAt: past - 1,
+        cachedAt: past - 2,
+      }),
+    )
   }
+  await flush()
 
-  t.ok(inserted > 0, 'inserted at least some entries before full')
-
-  // Insert immediately (no sleep) — should succeed via evict + retry.
+  // Fresh entry — eviction must free space during flush.
   const now = Date.now()
   store.set(
     makeKey({ path: '/after-evict' }),
@@ -244,6 +298,7 @@ test('set succeeds immediately after SQLITE_FULL without sleep (evict fix)', (t)
       deleteAt: now + 7200e3,
     }),
   )
+  await flush()
 
   const result = store.get(makeKey({ path: '/after-evict' }))
   t.ok(result)
@@ -251,10 +306,35 @@ test('set succeeds immediately after SQLITE_FULL without sleep (evict fix)', (t)
   t.end()
 })
 
-test('set never throws on DB errors — emits process warning instead', (t) => {
-  // Fill a tiny DB with non-expired entries then verify that even when every
-  // insert triggers SQLITE_FULL (eviction frees room or warning is emitted),
-  // set() never propagates a DB exception.
+test('flush emits warning for body too large to fit after eviction', async (t) => {
+  const maxSize = 4096 * 6
+  const store = new SqliteCacheStore({ maxSize })
+  t.teardown(() => store.close())
+
+  const warnings = []
+  const onWarning = (w) => warnings.push(w)
+  process.on('warning', onWarning)
+  t.teardown(() => process.off('warning', onWarning))
+
+  const tooBig = Buffer.alloc(maxSize, 'x')
+  const now = Date.now()
+  store.set(
+    makeKey({ path: '/too-big' }),
+    makeValue({
+      body: tooBig,
+      end: tooBig.byteLength,
+      cachedAt: now,
+      staleAt: now + 3600e3,
+      deleteAt: now + 7200e3,
+    }),
+  )
+  await flush()
+
+  t.ok(warnings.length > 0, 'warning emitted for oversized entry')
+  t.end()
+})
+
+test('set() never throws — DB errors surface as process warnings', async (t) => {
   const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
   t.teardown(() => store.close())
 
@@ -274,7 +354,8 @@ test('set never throws on DB errors — emits process warning instead', (t) => {
         }),
       )
     }
-  }, 'set must never throw on any DB error')
+  })
+  await flush()
   t.end()
 })
 
@@ -282,17 +363,13 @@ test('set never throws on DB errors — emits process warning instead', (t) => {
 // Bug fix: re-cached entry must be returned, not the stale duplicate
 // ---------------------------------------------------------------------------
 
-test('re-caching same key returns the freshest entry (cachedAt DESC fix)', (t) => {
-  // With ORDER BY deleteAt ASC the old entry came first (it had a shorter TTL
-  // from the original cache-control), so get() would return stale data even
-  // though a fresh response had just been stored.
+test('re-caching same key returns the freshest entry (cachedAt DESC fix)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   const now = Date.now()
   const key = makeKey({ path: '/revalidated' })
 
-  // First cache: short TTL, body = 'old'
   store.set(
     key,
     makeValue({
@@ -300,11 +377,11 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', (t) =
       end: 3,
       cachedAt: now - 5000,
       staleAt: now - 1000,
-      deleteAt: now + 1000, // expires soon — ORDER BY deleteAt ASC picks this first
+      deleteAt: now + 1000,
     }),
   )
+  await flush()
 
-  // Re-cache after revalidation: longer TTL, body = 'fresh'
   store.set(
     key,
     makeValue({
@@ -315,6 +392,7 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', (t) =
       deleteAt: now + 7200e3,
     }),
   )
+  await flush()
 
   const result = store.get(key)
   t.ok(result)
@@ -322,39 +400,11 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', (t) =
   t.end()
 })
 
-test('set never throws when body is too large to fit even after eviction', (t) => {
-  // When a body is larger than the entire DB capacity, the first insert fails
-  // (SQLITE_FULL), eviction removes all existing rows, but the retry still fails
-  // because the body alone exceeds max_page_count. The error must be emitted as
-  // a warning, not propagated. This covers the evict+retry failure path.
-  const maxSize = 4096 * 6
-  const store = new SqliteCacheStore({ maxSize })
-  t.teardown(() => store.close())
-
-  // A body the size of the entire DB — cannot fit even in an empty database.
-  const tooBig = Buffer.alloc(maxSize, 'x')
-  const now = Date.now()
-
-  t.doesNotThrow(() => {
-    store.set(
-      makeKey({ path: '/too-big' }),
-      makeValue({
-        body: tooBig,
-        end: tooBig.byteLength,
-        cachedAt: now,
-        staleAt: now + 3600e3,
-        deleteAt: now + 7200e3,
-      }),
-    )
-  }, 'must not throw even when body is too large to ever fit')
-  t.end()
-})
-
 // ---------------------------------------------------------------------------
-// purgeStale — no debounce, always runs
+// purgeStale
 // ---------------------------------------------------------------------------
 
-test('purgeStale always deletes expired entries regardless of call frequency', (t) => {
+test('purgeStale always deletes expired entries regardless of call frequency', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -362,13 +412,11 @@ test('purgeStale always deletes expired entries regardless of call frequency', (
   const key = makeKey({ path: '/purge-test' })
 
   store.set(key, makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }))
+  await flush()
 
-  // Old code debounced #prune — calling purgeStale immediately after construction
-  // would have been a no-op. Call it twice in a row to confirm no debounce.
   store.purgeStale()
   store.purgeStale()
 
-  // Now insert a fresh entry to confirm the old row was removed and not interfering.
   const now = Date.now()
   store.set(
     key,
@@ -380,6 +428,7 @@ test('purgeStale always deletes expired entries regardless of call frequency', (
       deleteAt: now + 7200e3,
     }),
   )
+  await flush()
   const result = store.get(key)
   t.ok(result)
   t.equal(result.body.toString(), 'fresh')
@@ -390,7 +439,7 @@ test('purgeStale always deletes expired entries regardless of call frequency', (
 // Vary header matching
 // ---------------------------------------------------------------------------
 
-test('vary header matching — hit', (t) => {
+test('vary header matching — hit', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -398,13 +447,13 @@ test('vary header matching — hit', (t) => {
     makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } }),
     makeValue({ vary: { 'accept-encoding': 'gzip' } }),
   )
+  await flush()
 
-  const result = store.get(makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } }))
-  t.ok(result)
+  t.ok(store.get(makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } })))
   t.end()
 })
 
-test('vary header matching — miss on different value', (t) => {
+test('vary header matching — miss on different value', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -412,12 +461,13 @@ test('vary header matching — miss on different value', (t) => {
     makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } }),
     makeValue({ vary: { 'accept-encoding': 'gzip' } }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/vary', headers: { 'accept-encoding': 'br' } })), undefined)
   t.end()
 })
 
-test('vary header matching — miss when request has no matching header', (t) => {
+test('vary header matching — miss when request has no matching header', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -425,12 +475,13 @@ test('vary header matching — miss when request has no matching header', (t) =>
     makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } }),
     makeValue({ vary: { 'accept-encoding': 'gzip' } }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/vary' })), undefined)
   t.end()
 })
 
-test('multiple vary variants for the same URL', (t) => {
+test('multiple vary variants for the same URL', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -442,6 +493,7 @@ test('multiple vary variants for the same URL', (t) => {
     makeKey({ path: '/mv', headers: { accept: 'application/json' } }),
     makeValue({ body: Buffer.from('json'), end: 4, vary: { accept: 'application/json' } }),
   )
+  await flush()
 
   t.equal(
     store.get(makeKey({ path: '/mv', headers: { accept: 'text/html' } })).body.toString(),
@@ -455,7 +507,7 @@ test('multiple vary variants for the same URL', (t) => {
   t.end()
 })
 
-test('vary with array header values — all elements must match', (t) => {
+test('vary with array header values — all elements must match', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -463,23 +515,23 @@ test('vary with array header values — all elements must match', (t) => {
     makeKey({ path: '/vary-arr', headers: { 'accept-encoding': ['gzip', 'br'] } }),
     makeValue({ vary: { 'accept-encoding': ['gzip', 'br'] } }),
   )
+  await flush()
 
-  // Exact match
   t.ok(store.get(makeKey({ path: '/vary-arr', headers: { 'accept-encoding': ['gzip', 'br'] } })))
-  // Different order — must not match (strict array equality)
   t.equal(
     store.get(makeKey({ path: '/vary-arr', headers: { 'accept-encoding': ['br', 'gzip'] } })),
     undefined,
+    'different order must not match',
   )
-  // Subset — must not match
   t.equal(
     store.get(makeKey({ path: '/vary-arr', headers: { 'accept-encoding': ['gzip'] } })),
     undefined,
+    'subset must not match',
   )
   t.end()
 })
 
-test('multi-header vary — all headers must match', (t) => {
+test('multi-header vary — all headers must match', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -487,21 +539,19 @@ test('multi-header vary — all headers must match', (t) => {
     makeKey({ path: '/mv2', headers: { 'accept-encoding': 'gzip', 'accept-language': 'en' } }),
     makeValue({ vary: { 'accept-encoding': 'gzip', 'accept-language': 'en' } }),
   )
+  await flush()
 
-  // Both match
   t.ok(
     store.get(
       makeKey({ path: '/mv2', headers: { 'accept-encoding': 'gzip', 'accept-language': 'en' } }),
     ),
   )
-  // One wrong
   t.equal(
     store.get(
       makeKey({ path: '/mv2', headers: { 'accept-encoding': 'gzip', 'accept-language': 'fr' } }),
     ),
     undefined,
   )
-  // One missing
   t.equal(store.get(makeKey({ path: '/mv2', headers: { 'accept-encoding': 'gzip' } })), undefined)
   t.end()
 })
@@ -510,27 +560,29 @@ test('multi-header vary — all headers must match', (t) => {
 // Range header handling
 // ---------------------------------------------------------------------------
 
-test('range header — array range returns undefined', (t) => {
+test('range header — array range returns undefined', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey(), makeValue())
+  await flush()
 
   t.equal(store.get(makeKey({ headers: { range: ['bytes=0-1', 'bytes=2-3'] } })), undefined)
   t.end()
 })
 
-test('range header — invalid range string returns undefined', (t) => {
+test('range header — invalid range string returns undefined', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey(), makeValue())
+  await flush()
 
   t.equal(store.get(makeKey({ headers: { range: 'invalid' } })), undefined)
   t.end()
 })
 
-test('range header — exact match on both start and end returns entry', (t) => {
+test('range header — exact match on both start and end returns entry', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -544,6 +596,7 @@ test('range header — exact match on both start and end returns entry', (t) => 
       statusMessage: 'Partial Content',
     }),
   )
+  await flush()
 
   const hit = store.get(makeKey({ path: '/range', headers: { range: 'bytes=10-16' } }))
   t.ok(hit)
@@ -552,10 +605,7 @@ test('range header — exact match on both start and end returns entry', (t) => 
   t.end()
 })
 
-test('range header — start in range but end mismatch → miss (covers loop continue)', (t) => {
-  // The SQL query uses `start <= ?` so entries with start=0 appear when requesting
-  // bytes=0-49. But the stored end (100) != requested end (50), so the loop must
-  // continue and return undefined. This covers the range-mismatch `continue` branch.
+test('range header — start in range but end mismatch → miss (covers loop continue)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -563,8 +613,8 @@ test('range header — start in range but end mismatch → miss (covers loop con
     makeKey({ path: '/range-end-mismatch' }),
     makeValue({ body: Buffer.alloc(100, 'x'), start: 0, end: 100, statusCode: 200 }),
   )
+  await flush()
 
-  // Same start, different end — must miss.
   t.equal(
     store.get(makeKey({ path: '/range-end-mismatch', headers: { range: 'bytes=0-49' } })),
     undefined,
@@ -573,23 +623,16 @@ test('range header — start in range but end mismatch → miss (covers loop con
   t.end()
 })
 
-test('range header — requested start differs from stored start → miss (covers loop continue)', (t) => {
-  // Store entry at start=5. Range request bytes=0-4 queries start<=0 so the entry
-  // doesn't appear in results (filtered by SQL). Range request bytes=5-9 is an exact
-  // match. Range request bytes=3-9: query start<=3 → entry NOT returned (start=5 > 3).
-  // To actually hit the JS continue: store start=0, request bytes=5-9 (query start<=5
-  // returns it, but JS check 5 !== 0 → continue).
+test('range header — requested start differs from stored start → miss (covers loop continue)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
-  // Full response stored at start=0.
   store.set(
     makeKey({ path: '/range-start-mismatch' }),
     makeValue({ body: Buffer.alloc(100, 'y'), start: 0, end: 100, statusCode: 200 }),
   )
+  await flush()
 
-  // Range request bytes=5-9: query returns the entry (start=0 <= 5), but start mismatch
-  // (5 !== 0) → loop continues → undefined.
   t.equal(
     store.get(makeKey({ path: '/range-start-mismatch', headers: { range: 'bytes=5-9' } })),
     undefined,
@@ -598,7 +641,7 @@ test('range header — requested start differs from stored start → miss (cover
   t.end()
 })
 
-test('range header — request for different byte window than stored → miss', (t) => {
+test('range header — request for different byte window than stored → miss', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -612,18 +655,14 @@ test('range header — request for different byte window than stored → miss', 
       statusMessage: 'Partial Content',
     }),
   )
+  await flush()
 
-  // Requested range does not overlap the stored range at all (SQL filters it out).
   t.equal(store.get(makeKey({ path: '/range', headers: { range: 'bytes=0-5' } })), undefined)
-  // Requested range overlaps but isn't exact.
   t.equal(store.get(makeKey({ path: '/range', headers: { range: 'bytes=10-20' } })), undefined)
   t.end()
 })
 
-test('range header — open-ended range (bytes=N-) returns undefined', (t) => {
-  // Open-ended range parses to { start, end: null }. The stored entry has a
-  // concrete end, so end !== null → no match. The store does not support
-  // serving open-ended ranges.
+test('range header — open-ended range (bytes=N-) returns undefined', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -631,6 +670,7 @@ test('range header — open-ended range (bytes=N-) returns undefined', (t) => {
     makeKey({ path: '/range-open' }),
     makeValue({ body: Buffer.alloc(100, 'z'), start: 0, end: 100, statusCode: 200 }),
   )
+  await flush()
 
   t.equal(
     store.get(makeKey({ path: '/range-open', headers: { range: 'bytes=0-' } })),
@@ -640,9 +680,7 @@ test('range header — open-ended range (bytes=N-) returns undefined', (t) => {
   t.end()
 })
 
-test('non-range request does not return a partial (start > 0) cached entry', (t) => {
-  // A stored partial entry has start=10. A non-range request queries start <= 0,
-  // so the entry must not be returned.
+test('non-range request does not return a partial (start > 0) cached entry', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -656,12 +694,13 @@ test('non-range request does not return a partial (start > 0) cached entry', (t)
       statusMessage: 'Partial Content',
     }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/partial' })), undefined)
   t.end()
 })
 
-test('non-range request returns a full cached response (start=0)', (t) => {
+test('non-range request returns a full cached response (start=0)', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -669,6 +708,7 @@ test('non-range request returns a full cached response (start=0)', (t) => {
     makeKey({ path: '/full-non-range' }),
     makeValue({ body: Buffer.from('full body'), start: 0, end: 9, statusCode: 200 }),
   )
+  await flush()
 
   const result = store.get(makeKey({ path: '/full-non-range' }))
   t.ok(result)
@@ -680,7 +720,7 @@ test('non-range request returns a full cached response (start=0)', (t) => {
 // Body variants
 // ---------------------------------------------------------------------------
 
-test('set with array body', (t) => {
+test('set with array body', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -688,12 +728,13 @@ test('set with array body', (t) => {
     makeKey({ path: '/arr' }),
     makeValue({ body: [Buffer.from('hello'), Buffer.from(' world')], end: 11 }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/arr' })).body.toString(), 'hello world')
   t.end()
 })
 
-test('set with null body', (t) => {
+test('set with null body', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -701,6 +742,7 @@ test('set with null body', (t) => {
     makeKey({ path: '/null' }),
     makeValue({ body: null, end: 0, statusCode: 204, statusMessage: 'No Content' }),
   )
+  await flush()
 
   const result = store.get(makeKey({ path: '/null' }))
   t.ok(result)
@@ -709,12 +751,13 @@ test('set with null body', (t) => {
   t.end()
 })
 
-test('large body round-trip', (t) => {
+test('large body round-trip', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   const largeBody = Buffer.alloc(1024 * 1024, 'x')
   store.set(makeKey({ path: '/large' }), makeValue({ body: largeBody, end: largeBody.byteLength }))
+  await flush()
 
   const result = store.get(makeKey({ path: '/large' }))
   t.ok(result)
@@ -727,7 +770,7 @@ test('large body round-trip', (t) => {
 // Key distinctness
 // ---------------------------------------------------------------------------
 
-test('different methods are distinct keys', (t) => {
+test('different methods are distinct keys', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -739,13 +782,14 @@ test('different methods are distinct keys', (t) => {
     makeKey({ method: 'HEAD', path: '/m' }),
     makeValue({ statusCode: 204, body: null, end: 0 }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ method: 'GET', path: '/m' })).statusCode, 200)
   t.equal(store.get(makeKey({ method: 'HEAD', path: '/m' })).statusCode, 204)
   t.end()
 })
 
-test('different origins are distinct keys', (t) => {
+test('different origins are distinct keys', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -757,18 +801,20 @@ test('different origins are distinct keys', (t) => {
     makeKey({ origin: 'https://b.com', path: '/x' }),
     makeValue({ statusCode: 404, body: null, end: 0 }),
   )
+  await flush()
 
   t.equal(store.get(makeKey({ origin: 'https://a.com', path: '/x' })).statusCode, 200)
   t.equal(store.get(makeKey({ origin: 'https://b.com', path: '/x' })).statusCode, 404)
   t.end()
 })
 
-test('different paths are distinct keys', (t) => {
+test('different paths are distinct keys', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/a' }), makeValue({ statusCode: 200, body: null, end: 0 }))
   store.set(makeKey({ path: '/b' }), makeValue({ statusCode: 404, body: null, end: 0 }))
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/a' })).statusCode, 200)
   t.equal(store.get(makeKey({ path: '/b' })).statusCode, 404)
@@ -779,23 +825,26 @@ test('different paths are distinct keys', (t) => {
 // Duplicate inserts and ordering
 // ---------------------------------------------------------------------------
 
-test('duplicate set inserts both entries; get returns earliest deleteAt', (t) => {
+test('duplicate set inserts both entries; get returns most recently cached entry (cachedAt DESC)', async (t) => {
+  // With ORDER BY cachedAt DESC the entry with the highest cachedAt wins.
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   const now = Date.now()
   store.set(
     makeKey({ path: '/dup' }),
-    makeValue({ body: Buffer.from('first'), end: 5, deleteAt: now + 7200e3 }),
+    makeValue({ body: Buffer.from('first'), end: 5, cachedAt: now, deleteAt: now + 7200e3 }),
   )
   store.set(
     makeKey({ path: '/dup' }),
-    makeValue({ body: Buffer.from('second'), end: 6, deleteAt: now + 7201e3 }),
+    // Strictly higher cachedAt so ordering is deterministic.
+    makeValue({ body: Buffer.from('second'), end: 6, cachedAt: now + 1, deleteAt: now + 7201e3 }),
   )
+  await flush()
 
   const result = store.get(makeKey({ path: '/dup' }))
   t.ok(result)
-  t.equal(result.body.toString(), 'first')
+  t.equal(result.body.toString(), 'second', 'most recently cached entry wins')
   t.end()
 })
 
@@ -803,16 +852,17 @@ test('duplicate set inserts both entries; get returns earliest deleteAt', (t) =>
 // Optional fields round-trip
 // ---------------------------------------------------------------------------
 
-test('etag stored and retrieved', (t) => {
+test('etag stored and retrieved', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/etag' }), makeValue({ etag: '"abc123"' }))
+  await flush()
   t.equal(store.get(makeKey({ path: '/etag' })).etag, '"abc123"')
   t.end()
 })
 
-test('cacheControlDirectives stored and retrieved', (t) => {
+test('cacheControlDirectives stored and retrieved', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -820,6 +870,7 @@ test('cacheControlDirectives stored and retrieved', (t) => {
     makeKey({ path: '/cc' }),
     makeValue({ cacheControlDirectives: { 'max-age': 3600, public: true } }),
   )
+  await flush()
   t.strictSame(store.get(makeKey({ path: '/cc' })).cacheControlDirectives, {
     'max-age': 3600,
     public: true,
@@ -827,7 +878,7 @@ test('cacheControlDirectives stored and retrieved', (t) => {
   t.end()
 })
 
-test('cachedAt, staleAt, deleteAt round-trip', (t) => {
+test('cachedAt, staleAt, deleteAt round-trip', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -836,6 +887,7 @@ test('cachedAt, staleAt, deleteAt round-trip', (t) => {
     makeKey({ path: '/ts' }),
     makeValue({ cachedAt: now, staleAt: now + 1800e3, deleteAt: now + 3600e3 }),
   )
+  await flush()
 
   const result = store.get(makeKey({ path: '/ts' }))
   t.equal(result.cachedAt, now)
@@ -844,11 +896,12 @@ test('cachedAt, staleAt, deleteAt round-trip', (t) => {
   t.end()
 })
 
-test('result omits undefined optional fields when not set', (t) => {
+test('result omits undefined optional fields when not set', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/minimal' }), makeValue({ body: Buffer.from('x'), end: 1 }))
+  await flush()
 
   const result = store.get(makeKey({ path: '/minimal' }))
   t.ok(result)
@@ -864,6 +917,8 @@ test('result omits undefined optional fields when not set', (t) => {
 // ---------------------------------------------------------------------------
 
 test('file-based store persists data across instances', (t) => {
+  // close() flushes pending items synchronously before closing the DB,
+  // so data written with set() is always readable by the next instance.
   const dbPath = path.join(os.tmpdir(), `cache-test-${Date.now()}.sqlite`)
   t.teardown(() => {
     for (const ext of ['', '-wal', '-shm']) {
@@ -875,7 +930,7 @@ test('file-based store persists data across instances', (t) => {
 
   const store1 = new SqliteCacheStore({ location: dbPath })
   store1.set(makeKey({ path: '/persist' }), makeValue({ body: Buffer.from('persisted'), end: 9 }))
-  store1.close()
+  store1.close() // Must flush before closing.
 
   const store2 = new SqliteCacheStore({ location: dbPath })
   t.teardown(() => store2.close())
@@ -886,18 +941,42 @@ test('file-based store persists data across instances', (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// close()
+// close() flushes pending items
 // ---------------------------------------------------------------------------
 
-test('close removes store from global set and prevents further use', (t) => {
+test('close() flushes pending items before closing the DB', (t) => {
+  const dbPath = path.join(os.tmpdir(), `cache-close-${Date.now()}.sqlite`)
+  t.teardown(() => {
+    for (const ext of ['', '-wal', '-shm']) {
+      try {
+        fs.unlinkSync(dbPath + ext)
+      } catch {}
+    }
+  })
+
+  const store = new SqliteCacheStore({ location: dbPath })
+  store.set(makeKey({ path: '/pending' }), makeValue({ body: Buffer.from('data'), end: 4 }))
+  // No await — close() must flush synchronously.
+  store.close()
+
+  const store2 = new SqliteCacheStore({ location: dbPath })
+  t.teardown(() => store2.close())
+  const result = store2.get(makeKey({ path: '/pending' }))
+  t.ok(result, 'pending item must be persisted by close()')
+  t.equal(result.body.toString(), 'data')
+  t.end()
+})
+
+test('close removes store from global set; subsequent get() returns undefined, set() silently discards', async (t) => {
   const store = new SqliteCacheStore()
   store.set(makeKey(), makeValue())
   store.close()
 
-  // get() is not guarded against DB errors so it throws after close.
-  t.throws(() => store.get(makeKey()))
-  // set() swallows DB errors as warnings, so it must not throw after close.
+  // get() returns undefined after close — does not throw.
+  t.equal(store.get(makeKey()), undefined)
+  // set() after close silently discards — no throw, no warning, no setImmediate.
   t.doesNotThrow(() => store.set(makeKey(), makeValue()))
+  await flush()
   t.end()
 })
 
@@ -1011,10 +1090,7 @@ test('assertCacheValue — throws on non-string etag', (t) => {
 // maxSize / SQLITE_FULL
 // ---------------------------------------------------------------------------
 
-test('maxSize: inserts cycle via eviction — set never throws for normal-sized entries', (t) => {
-  // With eviction, the store should always accept new writes by removing the
-  // oldest (lowest deleteAt) entries when the DB is full. All 100 inserts
-  // must succeed without throwing.
+test('maxSize: inserts cycle via eviction — set never throws for normal-sized entries', async (t) => {
   const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
   t.teardown(() => store.close())
 
@@ -1028,7 +1104,8 @@ test('maxSize: inserts cycle via eviction — set never throws for normal-sized 
         makeValue({ body, end: body.byteLength, deleteAt: now + 7200e3 + i }),
       )
     }
-  }, 'all inserts should succeed via eviction')
+  })
+  await flush()
   t.end()
 })
 
@@ -1036,12 +1113,13 @@ test('maxSize: inserts cycle via eviction — set never throws for normal-sized 
 // Edge cases
 // ---------------------------------------------------------------------------
 
-test('path with query string is part of the key', (t) => {
+test('path with query string is part of the key', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/q?a=1' }), makeValue({ statusCode: 200, body: null, end: 0 }))
   store.set(makeKey({ path: '/q?a=2' }), makeValue({ statusCode: 201, body: null, end: 0 }))
+  await flush()
 
   t.equal(store.get(makeKey({ path: '/q?a=1' })).statusCode, 200)
   t.equal(store.get(makeKey({ path: '/q?a=2' })).statusCode, 201)
@@ -1049,11 +1127,12 @@ test('path with query string is part of the key', (t) => {
   t.end()
 })
 
-test('body buffer is a proper Buffer (not raw Uint8Array) on result', (t) => {
+test('body buffer is a proper Buffer (not raw Uint8Array) on result', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey(), makeValue({ body: Buffer.from('data'), end: 4 }))
+  await flush()
 
   const result = store.get(makeKey())
   t.ok(Buffer.isBuffer(result.body), 'body should be a Buffer')
@@ -1070,17 +1149,16 @@ test('set with body length mismatch throws assertion error', (t) => {
   t.end()
 })
 
-test('vary with null header in stored entry matches null in request', (t) => {
-  // Tests the headerValueEquals(null, null) === true path.
+test('vary with null header in stored entry matches null in request', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/vary-null' }), makeValue({ vary: { 'x-custom': null } }))
+  await flush()
 
-  // Request with no x-custom header — headers[x-custom] is undefined, vary[x-custom] is null.
-  // Both are nullish so headerValueEquals(undefined, null) must return true.
-  const result = store.get(makeKey({ path: '/vary-null' }))
-  t.ok(result)
+  // Request with no x-custom header: headers['x-custom'] is undefined,
+  // vary['x-custom'] is null. headerValueEquals(undefined, null) must be true.
+  t.ok(store.get(makeKey({ path: '/vary-null' })))
   t.end()
 })
 
@@ -1092,7 +1170,6 @@ test('assertCacheValue error message reports actual type, not "string"', (t) => 
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
-  // Passing a number — error must say "number", not "string".
   try {
     store.set(makeKey(), 42)
     t.fail('should have thrown')
@@ -1101,7 +1178,6 @@ test('assertCacheValue error message reports actual type, not "string"', (t) => 
     t.notMatch(err.message, /^.*got string/, 'must not say "string"')
   }
 
-  // Passing a string — error must say "string".
   try {
     store.set(makeKey(), 'bad')
     t.fail('should have thrown')
@@ -1109,7 +1185,6 @@ test('assertCacheValue error message reports actual type, not "string"', (t) => 
     t.match(err.message, /string/, 'error says "string" for actual string input')
   }
 
-  // Passing null — error must say "null".
   try {
     store.set(makeKey(), null)
     t.fail('should have thrown')
@@ -1232,13 +1307,12 @@ test('set throws RangeError when value.end < value.start or non-finite', (t) => 
   t.end()
 })
 
-test('etag empty string is stored and retrieved as empty string, not undefined', (t) => {
-  // An empty etag '' is a valid (if unusual) string. The old falsy check
-  // `value.etag ? ... : null` would have silently discarded it.
+test('etag empty string is stored and retrieved as empty string, not undefined', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/etag-empty' }), makeValue({ etag: '' }))
+  await flush()
   const result = store.get(makeKey({ path: '/etag-empty' }))
   t.ok(result)
   t.equal(result.etag, '', 'empty etag must round-trip as empty string, not undefined')

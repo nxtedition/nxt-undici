@@ -334,6 +334,75 @@ test('flush emits warning for body too large to fit after eviction', async (t) =
   t.end()
 })
 
+test('SQLITE_FULL on BEGIN: eviction is triggered and entry is stored on retry', async (t) => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const AnyDB = /** @type {any} */ (DatabaseSync)
+
+  let beginFailed = false
+  const origExec = AnyDB.prototype.exec
+  AnyDB.prototype.exec = function (/** @type {string} */ sql) {
+    if (sql === 'BEGIN' && !beginFailed) {
+      beginFailed = true
+      throw Object.assign(new Error('disk or database is full'), { errcode: 13 })
+    }
+    return origExec.call(this, sql)
+  }
+
+  const store = new SqliteCacheStore()
+
+  t.teardown(() => {
+    AnyDB.prototype.exec = origExec
+    store.close()
+  })
+
+  store.set(makeKey({ path: '/begin-fail-once' }), makeValue())
+
+  // Two ticks: first flush hits the patched BEGIN, second succeeds on retry.
+  await flush()
+  await flush()
+
+  t.ok(
+    store.get(makeKey({ path: '/begin-fail-once' })),
+    'entry stored after BEGIN-failure recovery',
+  )
+  t.end()
+})
+
+test('SQLITE_FULL on BEGIN: batch is cleared after retries exhausted (no infinite loop)', async (t) => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const AnyDB = /** @type {any} */ (DatabaseSync)
+
+  const origExec = AnyDB.prototype.exec
+  AnyDB.prototype.exec = function (/** @type {string} */ sql) {
+    if (sql === 'BEGIN') {
+      throw Object.assign(new Error('disk or database is full'), { errcode: 13 })
+    }
+    return origExec.call(this, sql)
+  }
+
+  /** @type {Error[]} */
+  const warnings = []
+  const onWarning = (/** @type {Error} */ w) => warnings.push(w)
+  process.on('warning', onWarning)
+
+  const store = new SqliteCacheStore()
+
+  t.teardown(() => {
+    process.off('warning', onWarning)
+    AnyDB.prototype.exec = origExec
+    store.close()
+  })
+
+  store.set(makeKey({ path: '/begin-always-fail' }), makeValue())
+
+  // With the old code this would loop indefinitely (one warning per tick).
+  // With the fix the batch is cleared after 3 retries → exactly one warning.
+  for (let i = 0; i < 10; i++) await flush()
+
+  t.equal(warnings.length, 1, 'exactly one warning after retries exhausted')
+  t.end()
+})
+
 test('set() never throws — DB errors surface as process warnings', async (t) => {
   const store = new SqliteCacheStore({ maxSize: 4096 * 6 })
   t.teardown(() => store.close())

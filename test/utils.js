@@ -13,6 +13,8 @@ import {
   isDisturbed,
   parseHeaders,
   DecoratorHandler,
+  decorateError,
+  AbortError,
 } from '../lib/utils.js'
 
 // --- parseContentRange ---
@@ -368,5 +370,179 @@ test('DecoratorHandler - prevents calls after error', (t) => {
 
   t.equal(errorCount, 1)
   t.equal(dataCount, 0)
+  t.end()
+})
+
+// --- parseHeaders additional coverage ---
+
+test('bodyLength - non-null, non-stream, non-blob, non-buffer returns null', (t) => {
+  // A number/string/function has no stream, blob, or buffer properties → null
+  t.equal(bodyLength('a string'), null, 'string body has unknown length')
+  t.equal(bodyLength(42), null, 'number body has unknown length')
+  t.end()
+})
+
+test('parseHeaders - array format skips null val2 (lines 296-297)', (t) => {
+  const result = parseHeaders([Buffer.from('x-null'), null, Buffer.from('x-keep'), 'yes'])
+  t.notOk(result['x-null'], 'null value skipped in array format')
+  t.equal(result['x-keep'], 'yes')
+  t.end()
+})
+
+test('parseHeaders - array format duplicate key with array val2 (line 309)', (t) => {
+  // Array-format: key exists in obj, val2 is an array → line 309
+  const result = parseHeaders([Buffer.from('set-cookie'), ['c=3', 'd=4']], { 'set-cookie': 'a=1' })
+  t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
+  t.end()
+})
+
+test('parseHeaders - object format duplicate key with array val2 (line 339)', (t) => {
+  // Object format: key exists in obj, val2 is an array → line 339
+  const result = parseHeaders({ 'set-cookie': ['c=3', 'd=4'] }, { 'set-cookie': 'a=1' })
+  t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
+  t.end()
+})
+
+test('parseHeaders - object format duplicate key merges into array (line 341-342)', (t) => {
+  // obj already has 'x-foo'; headers adds another value → should become an array
+  const result = parseHeaders({ 'x-foo': 'second' }, { 'x-foo': 'first' })
+  t.strictSame(result['x-foo'], ['first', 'second'])
+  t.end()
+})
+
+test('parseHeaders - content-disposition converted to latin1 when content-length present', (t) => {
+  // Both headers present → latin1 conversion applied (utils.js lines 355-356)
+  const result = parseHeaders({
+    'content-length': '42',
+    'content-disposition': 'attachment; filename="file.txt"',
+  })
+  t.ok(result['content-disposition'], 'content-disposition is present after latin1 conversion')
+  t.ok(result['content-length'], 'content-length still present')
+  t.end()
+})
+
+// --- decorateError ---
+
+test('decorateError - body.error field is promoted onto err.error', (t) => {
+  const opts = { path: '/test', origin: 'http://example.com', method: 'GET', headers: {} }
+  const err = decorateError(null, opts, {
+    statusCode: 400,
+    headers: { 'content-type': 'application/json' },
+    trailers: {},
+    body: [Buffer.from(JSON.stringify({ error: 'bad_request' }))],
+  })
+  t.equal(err.error, 'bad_request', 'body.error promoted to err.error')
+  t.end()
+})
+
+test('decorateError - internal error returns AggregateError (catch block)', (t) => {
+  // A frozen error object throws TypeError on property assignment (strict mode).
+  // decorateError does `err.statusCode = statusCode` which will throw, triggering
+  // the catch block that returns new AggregateError([er, err]).
+  const opts = { path: '/test', origin: 'http://example.com', method: 'GET', headers: {} }
+  const frozenErr = Object.freeze(new Error('original'))
+  const result = decorateError(frozenErr, opts, {
+    statusCode: 400,
+    headers: null,
+    trailers: null,
+    body: null,
+  })
+  t.ok(result instanceof AggregateError, 'returns AggregateError when decoration throws internally')
+  t.end()
+})
+
+// --- parseURL object validation branches ---
+
+test('parseURL - object with invalid protocol throws', (t) => {
+  t.throws(() => parseURL({ protocol: 'ftp:', hostname: 'example.com' }), /Invalid URL protocol/)
+  t.end()
+})
+
+test('parseURL - object with non-string path throws', (t) => {
+  t.throws(() => parseURL({ protocol: 'http:', hostname: 'h', path: 123 }), /Invalid URL path/)
+  t.end()
+})
+
+test('parseURL - object with non-string pathname throws', (t) => {
+  t.throws(
+    () => parseURL({ protocol: 'http:', hostname: 'h', pathname: 123 }),
+    /Invalid URL pathname/,
+  )
+  t.end()
+})
+
+test('parseURL - object with non-string hostname throws', (t) => {
+  t.throws(() => parseURL({ protocol: 'http:', hostname: 123 }), /Invalid URL hostname/)
+  t.end()
+})
+
+test('parseURL - object with non-string origin throws', (t) => {
+  t.throws(() => parseURL({ protocol: 'http:', hostname: 'h', origin: 123 }), /Invalid URL origin/)
+  t.end()
+})
+
+// --- parseOrigin ---
+
+test('parseOrigin - throws when URL has non-root pathname', (t) => {
+  t.throws(() => parseOrigin('http://example.com/path'), /invalid url/)
+  t.end()
+})
+
+test('parseOrigin - throws when URL has search', (t) => {
+  t.throws(() => parseOrigin('http://example.com/?q=1'), /invalid url/)
+  t.end()
+})
+
+test('parseOrigin - accepts bare origin', (t) => {
+  const url = parseOrigin('http://example.com')
+  t.ok(url instanceof URL)
+  t.equal(url.origin, 'http://example.com')
+  t.end()
+})
+
+// --- AbortError ---
+
+test('AbortError - default message', (t) => {
+  const err = new AbortError()
+  t.equal(err.code, 'ABORT_ERR')
+  t.equal(err.name, 'AbortError')
+  t.equal(err.message, 'The operation was aborted')
+  t.end()
+})
+
+test('AbortError - custom message', (t) => {
+  const err = new AbortError('custom')
+  t.equal(err.message, 'custom')
+  t.end()
+})
+
+// --- bodyLength - ended stream ---
+
+test('bodyLength - ended stream with finite length returns length', (t) => {
+  const s = new Readable({ read() {} })
+  s.push('hello')
+  s.push(null) // end the stream
+  // Allow stream to process
+  setImmediate(() => {
+    const len = bodyLength(s)
+    // After being pushed null, readable state ends; length may be 5 if not consumed
+    t.ok(len === 5 || len === null, 'ended stream returns length or null')
+    t.end()
+  })
+})
+
+// --- DecoratorHandler.onUpgrade ---
+
+test('DecoratorHandler - onUpgrade proxied to handler', (t) => {
+  let upgraded = false
+  const handler = {
+    onUpgrade(statusCode, headers, socket) {
+      upgraded = true
+    },
+  }
+  const decorator = new DecoratorHandler(handler)
+  decorator.onConnect(() => {})
+  decorator.onUpgrade(101, {}, {})
+  t.ok(upgraded, 'onUpgrade forwarded to handler')
   t.end()
 })

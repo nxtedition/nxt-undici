@@ -157,3 +157,27 @@ test('lookup: no lookup option passes through unchanged', async (t) => {
   })
   t.equal(status, 200)
 })
+
+// ---------------------------------------------------------------------------
+// lookup returns falsy origin → throws 'invalid origin' (lookup.js lines 23-25)
+// ---------------------------------------------------------------------------
+
+test('lookup: falsy origin from callback throws invalid origin error', async (t) => {
+  t.plan(1)
+  const dispatch = makeDispatch()
+
+  try {
+    await rawRequest(dispatch, {
+      origin: 'http://original.example.com',
+      path: '/',
+      method: 'GET',
+      headers: {},
+      lookup: (origin, opts, callback) => {
+        callback(null, null) // returns null/falsy origin
+      },
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.ok(err.message.includes('invalid origin'), 'throws invalid origin for falsy lookup result')
+  }
+})

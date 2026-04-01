@@ -159,6 +159,36 @@ test('redirect: follow:false passthrough — non-redirect response returned as-i
   t.equal(status, 301)
 })
 
+// ---------------------------------------------------------------------------
+// follow as a function: returning false stops following and delivers the
+// redirect response as-is to the caller (redirect.js lines 69-73)
+// ---------------------------------------------------------------------------
+
+test('redirect: follow function returning false stops redirect and delivers 3xx response', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    res.writeHead(301, { location: '/other' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  let followCalled = false
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    follow(location, count, opts) {
+      followCalled = true
+      return false // stop redirecting
+    },
+  })
+
+  t.ok(followCalled, 'follow function was called')
+  t.equal(status, 301, 'redirect response delivered when follow() returns false')
+})
+
 test('redirect: user-supplied host header is stripped on redirect (undici sets its own)', async (t) => {
   t.plan(2)
   let hop = 0

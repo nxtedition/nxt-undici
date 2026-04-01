@@ -374,6 +374,34 @@ test('DecoratorHandler - prevents calls after error', (t) => {
 
 // --- parseHeaders additional coverage ---
 
+test('bodyLength - non-null, non-stream, non-blob, non-buffer returns null', (t) => {
+  // A number/string/function has no stream, blob, or buffer properties → null
+  t.equal(bodyLength('a string'), null, 'string body has unknown length')
+  t.equal(bodyLength(42), null, 'number body has unknown length')
+  t.end()
+})
+
+test('parseHeaders - array format skips null val2 (lines 296-297)', (t) => {
+  const result = parseHeaders([Buffer.from('x-null'), null, Buffer.from('x-keep'), 'yes'])
+  t.notOk(result['x-null'], 'null value skipped in array format')
+  t.equal(result['x-keep'], 'yes')
+  t.end()
+})
+
+test('parseHeaders - array format duplicate key with array val2 (line 309)', (t) => {
+  // Array-format: key exists in obj, val2 is an array → line 309
+  const result = parseHeaders([Buffer.from('set-cookie'), ['c=3', 'd=4']], { 'set-cookie': 'a=1' })
+  t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
+  t.end()
+})
+
+test('parseHeaders - object format duplicate key with array val2 (line 339)', (t) => {
+  // Object format: key exists in obj, val2 is an array → line 339
+  const result = parseHeaders({ 'set-cookie': ['c=3', 'd=4'] }, { 'set-cookie': 'a=1' })
+  t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
+  t.end()
+})
+
 test('parseHeaders - object format duplicate key merges into array (line 341-342)', (t) => {
   // obj already has 'x-foo'; headers adds another value → should become an array
   const result = parseHeaders({ 'x-foo': 'second' }, { 'x-foo': 'first' })

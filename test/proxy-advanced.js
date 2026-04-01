@@ -322,3 +322,235 @@ test('proxy: expect header is stripped from proxied request', async (t) => {
     proxy: {},
   })
 })
+
+// ---------------------------------------------------------------------------
+// proxy.socket (IPv4 with port) → forwarded header is built and sent
+// Covers proxy.js lines 97-109 and printIp IPv4-with-port path (lines 134-147)
+// ---------------------------------------------------------------------------
+
+test('proxy: socket info builds forwarded request header (IPv4)', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    t.ok(req.headers['forwarded'], 'forwarded header present in proxied request')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    proxy: {
+      socket: {
+        localAddress: '10.0.0.1',
+        localPort: 8080,
+        remoteAddress: '192.168.1.2',
+        remotePort: 54321,
+        encrypted: false,
+      },
+    },
+  })
+})
+
+// ---------------------------------------------------------------------------
+// proxy.socket with IPv6 address → printIp wraps in brackets
+// Covers printIp isIPv6 branch (proxy.js lines 136-138)
+// ---------------------------------------------------------------------------
+
+test('proxy: socket with IPv6 address builds forwarded header with bracketed IP', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    const fwd = req.headers['forwarded'] ?? ''
+    t.ok(fwd.includes('['), 'IPv6 address is bracketed in forwarded header')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    proxy: {
+      socket: {
+        localAddress: '::1',
+        localPort: 8080,
+        remoteAddress: '::ffff:192.0.2.1',
+        remotePort: 12345,
+        encrypted: true,
+      },
+    },
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Response forwarded header with no proxy socket → BadGateway
+// Covers proxy.js lines 111-113 (else if (forwarded) throw BadGateway)
+// ---------------------------------------------------------------------------
+
+test('proxy: response forwarded header without socket throws BadGateway', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    // Simulate a misbehaving upstream that echoes a forwarded header back
+    res.setHeader('forwarded', 'for=192.168.1.1')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  try {
+    await requestViaDispatch(dispatch, {
+      origin: `http://127.0.0.1:${server.address().port}`,
+      path: '/',
+      method: 'GET',
+      headers: {},
+      proxy: {}, // no socket → reduceHeaders in Handler.onHeaders throws BadGateway
+    })
+    t.fail('should have thrown BadGateway')
+  } catch (err) {
+    t.ok(
+      err.status === 502 ||
+        err.statusCode === 502 ||
+        (err.message && err.message.includes('Bad Gateway')),
+      'BadGateway thrown when response forwarded header present without proxy socket',
+    )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// proxy.socket + host header → forwardedHost is set from host value
+// Covers proxy.js line 76 (host = val) and line 107 (host in forwarded)
+// ---------------------------------------------------------------------------
+
+test('proxy: host header contributes to forwarded host field when socket is set', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    const fwd = req.headers['forwarded'] ?? ''
+    t.ok(fwd.includes('host="myhost.example.com"'), 'host value present in forwarded header')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { host: 'myhost.example.com' },
+    proxy: {
+      socket: {
+        localAddress: '10.0.0.1',
+        localPort: 8080,
+        remoteAddress: '10.0.0.2',
+        remotePort: 9090,
+        encrypted: false,
+      },
+    },
+  })
+})
+
+// ---------------------------------------------------------------------------
+// :authority pseudo-header is used as forwardedHost when socket present
+// Covers proxy.js lines 82-83 (:authority capture) and takes priority over host
+// ---------------------------------------------------------------------------
+
+test('proxy: :authority pseudo-header contributes to forwarded host and is stripped', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    // :authority must be stripped from request (pseudo-header)
+    t.notOk(req.headers[':authority'], ':authority pseudo-header stripped from request')
+    const fwd = req.headers['forwarded'] ?? ''
+    t.ok(fwd.includes('host="authority.example.com"'), ':authority value used as forwarded host')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { ':authority': 'authority.example.com' },
+    proxy: {
+      socket: {
+        localAddress: '10.0.0.1',
+        localPort: 8080,
+        remoteAddress: '10.0.0.2',
+        remotePort: 9090,
+        encrypted: false,
+      },
+    },
+  })
+})
+
+// ---------------------------------------------------------------------------
+// connection header listing a non-standard header name → that header is removed
+// Covers proxy.js lines 88-89 (connection value used to build remove list)
+// Per RFC 7230, Connection header may name headers that are per-hop only
+// ---------------------------------------------------------------------------
+
+test('proxy: connection header removes the named custom header', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    // x-per-hop was named in Connection, so it must be stripped
+    t.notOk(req.headers['x-per-hop'], 'x-per-hop header removed via connection directive')
+    // x-normal was not named, so it must pass through
+    t.equal(req.headers['x-normal'], 'keep', 'x-normal header preserved')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {
+      connection: 'x-per-hop',
+      'x-per-hop': 'remove-me',
+      'x-normal': 'keep',
+    },
+    proxy: {},
+  })
+})
+
+// ---------------------------------------------------------------------------
+// forwarded header is appended to when socket + existing forwarded request header
+// Covers the `forwarded ? forwarded + ', ' : ''` branch (proxy.js line 103)
+// ---------------------------------------------------------------------------
+
+test('proxy: existing forwarded header is prepended to new socket-built entry', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    const fwd = req.headers['forwarded'] ?? ''
+    // Should contain both the original value and the new socket-built entry
+    t.ok(
+      fwd.includes('for=1.2.3.4') && fwd.includes('by='),
+      'existing forwarded value plus new entry',
+    )
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {
+      forwarded: 'for=1.2.3.4',
+    },
+    proxy: {
+      socket: {
+        localAddress: '10.0.0.1',
+        localPort: 8888,
+        remoteAddress: '10.0.0.2',
+        remotePort: 9999,
+        encrypted: false,
+      },
+    },
+  })
+})

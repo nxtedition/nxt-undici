@@ -202,6 +202,61 @@ test('log: connection error calls logger.error with "upstream request failed"', 
 })
 
 // ---------------------------------------------------------------------------
+// Aborted request → logger.debug called with "upstream request aborted"
+// The #aborted flag is set when the user-side abort callback (passed to
+// handler.onConnect) is called explicitly — not via an AbortController signal.
+// ---------------------------------------------------------------------------
+
+test('log: user-triggered abort calls logger.debug with "upstream request aborted"', async (t) => {
+  t.plan(2)
+  const logger = makeMockLogger()
+  const dispatch = compose(new undici.Agent(), interceptors.log())
+
+  const server = await startServer((req, res) => {
+    res.writeHead(200)
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  let receivedError = null
+
+  await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: `http://127.0.0.1:${server.address().port}`,
+        path: '/',
+        method: 'GET',
+        headers: {},
+        logger,
+      },
+      {
+        onConnect(abort) {
+          // Immediately call the abort callback — this sets log handler's #aborted flag.
+          abort(new Error('user cancelled'))
+        },
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError(err) {
+          receivedError = err
+          resolve()
+        },
+      },
+    )
+  })
+
+  t.ok(receivedError, 'onError was called')
+  t.ok(
+    logger.calls.debug.some((args) => String(args[args.length - 1]).includes('aborted')),
+    'debug called for user-triggered abort',
+  )
+})
+
+// ---------------------------------------------------------------------------
 // logOpts.bindings are added to the child logger
 // ---------------------------------------------------------------------------
 

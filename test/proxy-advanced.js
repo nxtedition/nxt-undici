@@ -159,3 +159,166 @@ test('proxy: strips content-length for non-payload GET requests', async (t) => {
     proxy: {},
   })
 })
+
+// ---------------------------------------------------------------------------
+// Response hop-by-hop headers are stripped by Handler.onHeaders
+// ---------------------------------------------------------------------------
+
+test('proxy: response hop-by-hop headers are stripped', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    // Send hop-by-hop headers back in the response.
+    // Node's HTTP server normalises 'connection' automatically, but we can
+    // inject custom names that the HOP_EXPR regex would match.
+    res.setHeader('x-keep', 'yes')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  let receivedHeaders
+  const dispatch = makeDispatch()
+  await new Promise((resolve, reject) => {
+    dispatch(
+      {
+        origin: `http://127.0.0.1:${server.address().port}`,
+        path: '/',
+        method: 'GET',
+        headers: {},
+        proxy: {},
+      },
+      {
+        onConnect() {},
+        onHeaders(sc, headers) {
+          receivedHeaders = headers
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.ok(receivedHeaders, 'headers received')
+  t.equal(receivedHeaders['x-keep'], 'yes', 'non-hop-by-hop response header preserved')
+})
+
+// ---------------------------------------------------------------------------
+// Via loop detection: when response Via header includes the proxy name,
+// the interceptor throws LoopDetected which is propagated as an error.
+// ---------------------------------------------------------------------------
+
+test('proxy: LoopDetected when response Via includes proxy name', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    res.setHeader('via', 'HTTP/1.1 myproxy')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  try {
+    await requestViaDispatch(dispatch, {
+      origin: `http://127.0.0.1:${server.address().port}`,
+      path: '/',
+      method: 'GET',
+      headers: {},
+      proxy: { name: 'myproxy' },
+    })
+    t.fail('should have thrown LoopDetected')
+  } catch (err) {
+    t.ok(
+      err.status === 508 || err.statusCode === 508 || (err.message && err.message.includes('Loop')),
+      'LoopDetected error thrown',
+    )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Via header from a different proxy is preserved and this proxy's name appended
+// (covers the `via += ', '` continuation path)
+// ---------------------------------------------------------------------------
+
+test('proxy: Via header from another proxy gets this proxy name appended', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    // Response Via header has a different proxy — not a loop
+    res.setHeader('via', 'HTTP/1.1 otherproxy')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  let receivedVia
+  const dispatch = makeDispatch()
+  await new Promise((resolve, reject) => {
+    dispatch(
+      {
+        origin: `http://127.0.0.1:${server.address().port}`,
+        path: '/',
+        method: 'GET',
+        headers: {},
+        proxy: { name: 'myproxy' },
+      },
+      {
+        onConnect() {},
+        onHeaders(sc, headers) {
+          receivedVia = headers.via
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.match(receivedVia, /otherproxy.*myproxy|myproxy.*otherproxy/, 'both proxy names in Via')
+})
+
+// ---------------------------------------------------------------------------
+// Pseudo-headers (key starting with ':') are stripped from the request
+// ---------------------------------------------------------------------------
+
+test('proxy: pseudo-headers are stripped from proxied request', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    t.notOk(req.headers[':path'], 'pseudo-header :path stripped')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { ':path': '/something' },
+    proxy: {},
+  })
+})
+
+// ---------------------------------------------------------------------------
+// expect header is stripped (undici doesn't support it)
+// ---------------------------------------------------------------------------
+
+test('proxy: expect header is stripped from proxied request', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    t.notOk(req.headers['expect'], 'expect header stripped')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { expect: '100-continue' },
+    proxy: {},
+  })
+})

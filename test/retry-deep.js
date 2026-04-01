@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { createServer } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
 import { test } from 'tap'
 import { request } from '../lib/index.js'
 
@@ -784,5 +785,67 @@ test('mid-stream retry: unknown content-length uses open-ended range', (t) => {
     })
     const text = await body.text()
     t.equal(text, 'helloworld', 'should resume correctly with open-ended range')
+  })
+})
+
+// ─── Numeric retry shorthand ───
+
+test('retry: numeric retry value limits retries to that count', (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    res.statusCode = 503
+    res.end('unavailable')
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    try {
+      // retry: 1 → max 1 retry, 0ms delay at retryCount=0 — fast
+      const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+        retry: 1,
+      })
+      await body.dump()
+      t.fail('should have thrown')
+    } catch (err) {
+      t.ok(err, 'throws after exhausting numeric retry count')
+    }
+    // initial request + 1 retry = 2 attempts total
+    t.equal(attempts, 2, 'numeric retry shorthand: exactly 1 retry (2 total attempts)')
+  })
+})
+
+// ─── "other side closed" triggers retry ───
+
+test('retry: "other side closed" connection triggers retry', (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  // Use a raw net server so we can close the TCP socket cleanly without
+  // sending any HTTP response — this produces undici's "other side closed" error.
+  const server = createNetServer((socket) => {
+    attempts++
+    socket.once('data', () => {
+      if (attempts === 1) {
+        // Graceful half-close: no HTTP response sent
+        socket.end()
+      } else {
+        // Second attempt: return a valid HTTP/1.1 response
+        socket.write('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+        socket.end()
+      }
+    })
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`, {
+      retry: fastRetry,
+    })
+    await body.dump()
+    t.equal(statusCode, 200)
+    t.equal(attempts, 2, '"other side closed" triggers one retry')
   })
 })

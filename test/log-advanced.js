@@ -310,3 +310,54 @@ test('log: logOpts.bindings are forwarded to the child logger', async (t) => {
   })
   t.ok(childCalledWithBindings, 'bindings forwarded to child logger')
 })
+
+// ---------------------------------------------------------------------------
+// onDone array swap: when a non-last handler completes, the last element in
+// the global array is moved into its slot (log.js lines 156-158)
+// ---------------------------------------------------------------------------
+
+test('log: onDone swaps last entry into slot when completed handler is not last', async (t) => {
+  t.plan(2)
+
+  // Server A responds immediately; server B responds after 50ms.
+  // By starting request A first and B second, A gets globalIndex=0, B gets
+  // globalIndex=1. When A finishes first, onDone pops B (the last element)
+  // and writes it into slot 0 — covering the swap branch (lines 156-158).
+  const serverA = await startServer((req, res) => {
+    res.writeHead(200)
+    res.end()
+  })
+  t.teardown(serverA.close.bind(serverA))
+
+  const serverB = await startServer((req, res) => {
+    setTimeout(() => {
+      res.writeHead(200)
+      res.end()
+    }, 50)
+  })
+  t.teardown(serverB.close.bind(serverB))
+
+  const logger = makeMockLogger()
+  const dispatch = compose(new undici.Agent(), interceptors.log())
+
+  // Both dispatches happen synchronously before any I/O: A's handler is pushed
+  // first (index 0), B's handler second (index 1).
+  const promiseA = rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${serverA.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    logger,
+  })
+  const promiseB = rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${serverB.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    logger,
+  })
+
+  const [statusA, statusB] = await Promise.all([promiseA, promiseB])
+  t.equal(statusA, 200, 'request A (fast server) completed successfully')
+  t.equal(statusB, 200, 'request B (slow server) completed successfully')
+})

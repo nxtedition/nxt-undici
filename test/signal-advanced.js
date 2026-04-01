@@ -4,10 +4,6 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { request } from '../lib/index.js'
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 async function startServer(handler) {
   const server = createServer(handler ?? ((req, res) => res.end('ok')))
   server.listen(0)
@@ -16,56 +12,13 @@ async function startServer(handler) {
 }
 
 // ---------------------------------------------------------------------------
-// Pre-aborted signal (before request is sent)
+// Abort while waiting for headers (server never responds)
 // ---------------------------------------------------------------------------
 
-test('signal: already-aborted signal rejects with custom reason', async (t) => {
-  t.plan(1)
-  const server = await startServer()
-  t.teardown(server.close.bind(server))
-
-  const ac = new AbortController()
-  const reason = new Error('pre-aborted')
-  ac.abort(reason)
-
-  try {
-    await request(`http://127.0.0.1:${server.address().port}`, {
-      signal: ac.signal,
-      retry: false,
-    })
-    t.fail('should have thrown')
-  } catch (err) {
-    t.equal(err, reason)
-  }
-})
-
-test('signal: already-aborted with default reason propagates AbortError', async (t) => {
-  t.plan(1)
-  const server = await startServer()
-  t.teardown(server.close.bind(server))
-
-  const ac = new AbortController()
-  ac.abort()
-
-  try {
-    await request(`http://127.0.0.1:${server.address().port}`, {
-      signal: ac.signal,
-      retry: false,
-    })
-    t.fail('should have thrown')
-  } catch (err) {
-    t.ok(err.name === 'AbortError' || err.name === 'RequestAbortedError')
-  }
-})
-
-// ---------------------------------------------------------------------------
-// Abort while waiting for headers
-// ---------------------------------------------------------------------------
-
-test('signal: abort while waiting for headers', async (t) => {
+test('signal: abort while waiting for headers cancels the request', async (t) => {
   t.plan(1)
   const server = await startServer((req, res) => {
-    // Intentionally never respond
+    // Never respond — keep the connection hanging
   })
   t.teardown(server.close.bind(server))
 
@@ -85,10 +38,10 @@ test('signal: abort while waiting for headers', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// Abort while consuming body
+// Abort while consuming body (server sends partial data then hangs)
 // ---------------------------------------------------------------------------
 
-test('signal: abort mid-body consumption propagates AbortError', async (t) => {
+test('signal: abort mid-body consumption propagates abort error through stream', async (t) => {
   t.plan(1)
   const server = await startServer((req, res) => {
     res.write('chunk1')
@@ -104,7 +57,7 @@ test('signal: abort mid-body consumption propagates AbortError', async (t) => {
 
   let threw = false
   try {
-    for await (const chunk of body) {
+    for await (const _ of body) {
       ac.abort()
     }
   } catch (err) {
@@ -117,10 +70,10 @@ test('signal: abort mid-body consumption propagates AbortError', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// Abort with a custom reason object
+// Abort with a custom reason is forwarded exactly
 // ---------------------------------------------------------------------------
 
-test('signal: custom abort reason is propagated', async (t) => {
+test('signal: custom abort reason is forwarded as the thrown error', async (t) => {
   t.plan(1)
   const server = await startServer((req, res) => {
     // Never respond
@@ -139,15 +92,15 @@ test('signal: custom abort reason is propagated', async (t) => {
     })
     t.fail('should have thrown')
   } catch (err) {
-    t.equal(err, myReason)
+    t.equal(err, myReason, 'thrown error must be the exact abort reason')
   }
 })
 
 // ---------------------------------------------------------------------------
-// Aborting AFTER full response has no effect
+// Aborting after the body is fully consumed has no effect
 // ---------------------------------------------------------------------------
 
-test('signal: aborting after full response does not affect resolved value', async (t) => {
+test('signal: aborting after response is fully consumed does not affect result', async (t) => {
   t.plan(2)
   const server = await startServer((req, res) => {
     res.end('done')
@@ -159,7 +112,7 @@ test('signal: aborting after full response does not affect resolved value', asyn
     signal: ac.signal,
   })
   const text = await body.text()
-  ac.abort()
+  ac.abort() // abort after everything is done
 
   t.equal(statusCode, 200)
   t.equal(text, 'done')

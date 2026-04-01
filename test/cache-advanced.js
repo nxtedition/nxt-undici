@@ -291,3 +291,29 @@ test('cache: POST requests are not cached', async (t) => {
   await rawRequest(dispatch, opts)
   t.equal(hits, 2, 'POST requests bypass cache')
 })
+
+// ---------------------------------------------------------------------------
+// cache interceptor used standalone: headers:undefined must not crash
+// ---------------------------------------------------------------------------
+
+test('cache: does not crash when opts.headers is undefined', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch(store)
+
+  // headers intentionally omitted (undefined)
+  const status = await rawRequest(dispatch, {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: undefined,
+    cache: { store },
+  })
+  t.equal(status, 200)
+})

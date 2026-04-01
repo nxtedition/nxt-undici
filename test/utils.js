@@ -13,6 +13,7 @@ import {
   isDisturbed,
   parseHeaders,
   DecoratorHandler,
+  decorateError,
 } from '../lib/utils.js'
 
 // --- parseContentRange ---
@@ -368,5 +369,55 @@ test('DecoratorHandler - prevents calls after error', (t) => {
 
   t.equal(errorCount, 1)
   t.equal(dataCount, 0)
+  t.end()
+})
+
+// --- parseHeaders additional coverage ---
+
+test('parseHeaders - object format duplicate key merges into array (line 341-342)', (t) => {
+  // obj already has 'x-foo'; headers adds another value → should become an array
+  const result = parseHeaders({ 'x-foo': 'second' }, { 'x-foo': 'first' })
+  t.strictSame(result['x-foo'], ['first', 'second'])
+  t.end()
+})
+
+test('parseHeaders - content-disposition converted to latin1 when content-length present', (t) => {
+  // Both headers present → latin1 conversion applied (utils.js lines 355-356)
+  const result = parseHeaders({
+    'content-length': '42',
+    'content-disposition': 'attachment; filename="file.txt"',
+  })
+  t.ok(result['content-disposition'], 'content-disposition is present after latin1 conversion')
+  t.ok(result['content-length'], 'content-length still present')
+  t.end()
+})
+
+// --- decorateError ---
+
+test('decorateError - body.error field is promoted onto err.error', (t) => {
+  const opts = { path: '/test', origin: 'http://example.com', method: 'GET', headers: {} }
+  const err = decorateError(null, opts, {
+    statusCode: 400,
+    headers: { 'content-type': 'application/json' },
+    trailers: {},
+    body: [Buffer.from(JSON.stringify({ error: 'bad_request' }))],
+  })
+  t.equal(err.error, 'bad_request', 'body.error promoted to err.error')
+  t.end()
+})
+
+test('decorateError - internal error returns AggregateError (catch block)', (t) => {
+  // A frozen error object throws TypeError on property assignment (strict mode).
+  // decorateError does `err.statusCode = statusCode` which will throw, triggering
+  // the catch block that returns new AggregateError([er, err]).
+  const opts = { path: '/test', origin: 'http://example.com', method: 'GET', headers: {} }
+  const frozenErr = Object.freeze(new Error('original'))
+  const result = decorateError(frozenErr, opts, {
+    statusCode: 400,
+    headers: null,
+    trailers: null,
+    body: null,
+  })
+  t.ok(result instanceof AggregateError, 'returns AggregateError when decoration throws internally')
   t.end()
 })

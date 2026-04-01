@@ -1,8 +1,11 @@
 /* eslint-disable */
 import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
+import { once } from 'node:events'
 import { test } from 'tap'
+import { compose, interceptors } from '../lib/index.js'
 import { request } from '../lib/index.js'
+import undici from '@nxtedition/undici'
 
 // Custom retry that returns true immediately (no delay) for faster tests
 function fastRetry(err, retryCount, opts, defaultRetry) {
@@ -848,4 +851,288 @@ test('retry: "other side closed" connection triggers retry', (t) => {
     t.equal(statusCode, 200)
     t.equal(attempts, 2, '"other side closed" triggers one retry')
   })
+})
+
+// ---------------------------------------------------------------------------
+// "other side closed" with DEFAULT retry logic (exercises #retryFn lines 359-363)
+// ---------------------------------------------------------------------------
+
+test('retry: "other side closed" triggers retry via default #retryFn', async (t) => {
+  t.plan(2)
+  let attempts = 0
+  const server = createNetServer((socket) => {
+    attempts++
+    socket.once('data', () => {
+      if (attempts === 1) {
+        socket.end() // graceful close without HTTP response → "other side closed"
+      } else {
+        socket.write('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+        socket.end()
+      }
+    })
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  // Use default retry (no custom function) — exercises #retryFn path
+  const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`, {
+    retry: { count: 2 },
+  })
+  await body.dump()
+  t.equal(statusCode, 200, 'recovered after "other side closed"')
+  t.equal(attempts, 2, 'retried once')
+})
+
+// ---------------------------------------------------------------------------
+// Trailer response header bypasses retry buffering (lines 95-97)
+// ---------------------------------------------------------------------------
+
+test('retry: Trailer response header causes immediate header passthrough', async (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.writeHead(200, { trailer: 'Expires' })
+    res.write('hello')
+    res.addTrailers({ Expires: 'Thu, 01 Jan 2099 00:00:00 GMT' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`)
+  const text = await body.text()
+  t.equal(statusCode, 200)
+  t.equal(text, 'hello')
+})
+
+// ---------------------------------------------------------------------------
+// Non-finite content-length bypasses retry buffering (lines 101-103)
+// Use a mock dispatch to bypass undici's protocol-level Content-Length check
+// ---------------------------------------------------------------------------
+
+test('retry: non-finite content-length causes immediate header passthrough', async (t) => {
+  t.plan(2)
+  // Mock dispatch delivers headers with a non-numeric Content-Length value.
+  // This bypasses undici's protocol-level rejection to exercise lines 101-103.
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, { 'content-length': 'NaN' }, () => {})
+    handler.onData(Buffer.from('hello'))
+    handler.onComplete({})
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  const result = await new Promise((resolve, reject) => {
+    let statusCode
+    const chunks = []
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: { count: 1 } },
+      {
+        onConnect() {},
+        onHeaders(sc) {
+          statusCode = sc
+          return true
+        },
+        onData(chunk) {
+          chunks.push(chunk)
+        },
+        onComplete() {
+          resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.equal(result.statusCode, 200, 'response delivered despite malformed content-length')
+  t.equal(result.body, 'hello')
+})
+
+// ---------------------------------------------------------------------------
+// onUpgrade throws (lines 80-82): retry handler does not support upgrades
+// The mock dispatch catches the onUpgrade throw and forwards it via onError
+// ---------------------------------------------------------------------------
+
+test('retry: onUpgrade throws "not supported"', async (t) => {
+  t.plan(1)
+  // Mock dispatch catches the throw from onUpgrade and routes it to onError
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    try {
+      handler.onUpgrade(101, { upgrade: 'websocket' }, {})
+    } catch (err) {
+      handler.onError(err)
+    }
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  await new Promise((resolve) => {
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: { count: 1 } },
+      {
+        onConnect() {},
+        onUpgrade() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError(err) {
+          t.match(err.message, /not supported/, 'onUpgrade throws "not supported"')
+          resolve()
+        },
+      },
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 206 as first response — exercises lines 106-114 in onHeaders
+// ---------------------------------------------------------------------------
+
+test('retry: 206 first response with valid content-range is tracked for resumption', async (t) => {
+  t.plan(2)
+  // Mock dispatch: first call returns a valid 206 (partial content)
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(
+      206,
+      { 'content-range': 'bytes 0-4/10', 'content-length': '5', etag: '"abc"' },
+      () => {},
+    )
+    handler.onData(Buffer.from('hello'))
+    handler.onComplete({})
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  const result = await new Promise((resolve, reject) => {
+    let statusCode
+    const chunks = []
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: { count: 1 } },
+      {
+        onConnect() {},
+        onHeaders(sc) {
+          statusCode = sc
+          return true
+        },
+        onData(chunk) {
+          chunks.push(chunk)
+        },
+        onComplete() {
+          resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.equal(result.statusCode, 206, '206 response forwarded')
+  t.equal(result.body, 'hello', 'body forwarded')
+})
+
+// ---------------------------------------------------------------------------
+// Custom retry function that throws synchronously (lines 268-269, 300)
+// ---------------------------------------------------------------------------
+
+test('retry: synchronously-throwing retry function causes error via .catch (lines 268-269, 300)', async (t) => {
+  t.plan(1)
+  const server = createServer((req, res) => {
+    res.statusCode = 503
+    res.end('err')
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  try {
+    await request(`http://0.0.0.0:${server.address().port}`, {
+      retry(err) {
+        throw new Error('retry strategy exploded') // synchronous throw
+      },
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.message, 'retry strategy exploded', 'error from throwing retry function propagated')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// "other side closed" message without recognized error code (lines 359-363)
+// Use a mock dispatch so we control the exact error properties
+// ---------------------------------------------------------------------------
+
+test('retry: "other side closed" message triggers #retryFn delay (lines 359-363)', async (t) => {
+  t.plan(1)
+  let callCount = 0
+  // Mock dispatch: first call triggers error with message "other side closed" but no code;
+  // second call succeeds
+  const mockDispatch = (opts, handler) => {
+    callCount++
+    handler.onConnect(() => {})
+    if (callCount === 1) {
+      const err = new Error('other side closed')
+      // deliberately omit err.code so lines 335-356 don't match; only 359-363 does
+      handler.onError(err)
+    } else {
+      handler.onHeaders(200, {}, () => {})
+      handler.onData(Buffer.from('ok'))
+      handler.onComplete({})
+    }
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  const result = await new Promise((resolve, reject) => {
+    let statusCode
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: { count: 2 } },
+      {
+        onConnect() {},
+        onHeaders(sc) {
+          statusCode = sc
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve(statusCode)
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.equal(result, 200, 'recovered after "other side closed" via #retryFn')
+})
+
+// ---------------------------------------------------------------------------
+// retry: 0 (falsy retry count) disables retrying entirely (lines 308-309)
+// ---------------------------------------------------------------------------
+
+test('retry: retry:0 does not retry on 503', async (t) => {
+  t.plan(2)
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    res.statusCode = 503
+    res.end('nope')
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  try {
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`, { retry: 0 })
+    await body.dump()
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.statusCode, 503, 'error thrown for 503')
+  }
+  t.equal(attempts, 1, 'zero retries: only one attempt')
 })

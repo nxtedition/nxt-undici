@@ -554,3 +554,49 @@ test('proxy: existing forwarded header is prepended to new socket-built entry', 
     },
   })
 })
+
+// ---------------------------------------------------------------------------
+// onUpgrade: proxy handler processes response headers and forwards socket (lines 15-32)
+// ---------------------------------------------------------------------------
+
+test('proxy: onUpgrade processes response headers via reduceHeaders and forwards socket', async (t) => {
+  t.plan(2)
+  // Mock dispatch that sends an upgrade (101) response
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onUpgrade(101, { upgrade: 'websocket', 'x-custom': 'keep' }, {})
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.proxy())
+
+  let upgradedHeaders
+  await new Promise((resolve, reject) => {
+    dispatch(
+      {
+        method: 'GET',
+        path: '/',
+        origin: 'http://x',
+        headers: {},
+        proxy: { httpVersion: '1.1' },
+      },
+      {
+        onConnect() {},
+        onUpgrade(statusCode, headers, socket) {
+          upgradedHeaders = headers
+          resolve()
+        },
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.ok(upgradedHeaders, 'onUpgrade was called with processed headers')
+  t.equal(upgradedHeaders['x-custom'], 'keep', 'non-hop headers preserved in upgrade response')
+})

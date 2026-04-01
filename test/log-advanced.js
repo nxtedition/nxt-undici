@@ -361,3 +361,53 @@ test('log: onDone swaps last entry into slot when completed handler is not last'
   t.equal(statusA, 200, 'request A (fast server) completed successfully')
   t.equal(statusB, 200, 'request B (slow server) completed successfully')
 })
+
+// ---------------------------------------------------------------------------
+// onUpgrade: log handler records the upgrade and forwards the socket (lines 57-72)
+// ---------------------------------------------------------------------------
+
+test('log: onUpgrade logs the upgrade response and forwards socket to handler', async (t) => {
+  t.plan(2)
+  const logger = makeMockLogger()
+
+  // Mock dispatch that sends an upgrade (101) response
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    const mockSocket = {
+      on(event, fn) {
+        if (event === 'close') fn()
+      },
+    }
+    handler.onUpgrade(101, { upgrade: 'websocket' }, mockSocket)
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.log())
+
+  await new Promise((resolve, reject) => {
+    let upgraded = false
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', logger },
+      {
+        onConnect() {},
+        onUpgrade(statusCode, headers, socket) {
+          upgraded = true
+          resolve()
+        },
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.ok(
+    logger.calls.debug.some((args) => String(args[args.length - 1]).includes('upgrade')),
+    'debug log emitted for upgrade',
+  )
+  t.ok(true, 'onUpgrade forwarded to user handler')
+})

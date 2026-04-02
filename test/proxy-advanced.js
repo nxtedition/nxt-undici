@@ -600,3 +600,46 @@ test('proxy: onUpgrade processes response headers via reduceHeaders and forwards
   t.ok(upgradedHeaders, 'onUpgrade was called with processed headers')
   t.equal(upgradedHeaders['x-custom'], 'keep', 'non-hop headers preserved in upgrade response')
 })
+
+// ---------------------------------------------------------------------------
+// Regression: content-length on GET requests was NOT stripped by the proxy
+// interceptor due to a missing `else if`. The first `if` matched (empty body)
+// but fell through to the next `if` which re-added the header.
+// ---------------------------------------------------------------------------
+
+test('proxy: content-length is stripped from GET requests (non-payload methods)', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    t.notOk(req.headers['content-length'], 'content-length stripped on GET')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { 'content-length': '0' },
+    proxy: {},
+  })
+})
+
+test('proxy: content-length is preserved on POST requests (payload methods)', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    t.equal(req.headers['content-length'], '5', 'content-length preserved on POST')
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = makeDispatch()
+  await requestViaDispatch(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'POST',
+    headers: { 'content-length': '5' },
+    body: 'hello',
+    proxy: {},
+  })
+})

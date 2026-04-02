@@ -178,3 +178,33 @@ test('response-error: unknown content-type body not attached', async (t) => {
     t.notOk(err.body)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Regression: error body accumulation is capped at 256 KB to prevent OOM.
+// Previously there was no limit — a large JSON or text error response would
+// grow #body without bound.
+// ---------------------------------------------------------------------------
+
+test('response-error: large error body is truncated at 256 KB', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    res.writeHead(500, { 'content-type': 'text/plain' })
+    // Send 512 KB of text — exceeds the 256 KB cap
+    const chunk = 'x'.repeat(64 * 1024)
+    for (let i = 0; i < 8; i++) {
+      res.write(chunk)
+    }
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://127.0.0.1:${server.address().port}`, { retry: false })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.statusCode, 500)
+    // The body string should be capped — strictly less than what the server sent
+    const bodyLen = typeof err.body === 'string' ? err.body.length : 0
+    t.ok(bodyLen <= 256 * 1024, `body length ${bodyLen} should be <= 256KB`)
+  }
+})

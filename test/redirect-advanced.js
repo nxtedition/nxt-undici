@@ -217,3 +217,37 @@ test('redirect: user-supplied host header is stripped on redirect (undici sets i
     follow: 5,
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression: cleanRequestHeaders returned undefined when all headers were
+// removed (e.g. 303 cross-origin redirect with only host + content-type).
+// This caused opts.headers to be undefined, which could crash downstream
+// interceptors that spread headers ({...opts.headers}).
+// ---------------------------------------------------------------------------
+
+test('redirect: 303 cross-origin strips all headers without crashing', async (t) => {
+  t.plan(1)
+  // Server A redirects to Server B with 303
+  const serverB = await startServer((req, res) => {
+    res.writeHead(200)
+    res.end('final')
+  })
+  t.teardown(serverB.close.bind(serverB))
+
+  const serverA = await startServer((req, res) => {
+    // 303 to a different origin — removes host, content-*, authorization, cookie
+    res.writeHead(303, { location: `http://127.0.0.1:${serverB.address().port}/dest` })
+    res.end()
+  })
+  t.teardown(serverA.close.bind(serverA))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${serverA.address().port}`,
+    path: '/start',
+    method: 'POST',
+    headers: { host: 'a.example.com', 'content-type': 'application/json' },
+    follow: 5,
+  })
+  t.equal(status, 200, '303 cross-origin redirect succeeds without undefined headers')
+})

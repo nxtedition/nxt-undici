@@ -2,6 +2,7 @@
 import { test } from 'tap'
 import crypto from 'node:crypto'
 import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { request } from '../lib/index.js'
 
 test('verify passes on correct content-length', (t) => {
@@ -204,4 +205,49 @@ test('verify passes when content-md5 header is absent', (t) => {
     }
     t.equal(Buffer.concat(chunks).toString(), 'hello world')
   })
+})
+
+// ---------------------------------------------------------------------------
+// verify + retry: assert(!this.#pos) used to crash on retry because #pos
+// was not reset. Now onConnect resets #pos to 0 without asserting.
+// ---------------------------------------------------------------------------
+
+test('verify: retry after mid-stream failure does not crash due to stale #pos', async (t) => {
+  t.plan(1)
+  let attempts = 0
+  const body = 'hello world'
+  const md5 = crypto.createHash('md5').update(body).digest('base64')
+
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.writeHead(200, {
+        'content-length': Buffer.byteLength(body),
+        'content-md5': md5,
+        etag: '"v1"',
+      })
+      res.write('hello')
+      setTimeout(() => res.destroy(), 50)
+    } else {
+      res.writeHead(206, {
+        'content-range': `bytes 5-${Buffer.byteLength(body) - 1}/${Buffer.byteLength(body)}`,
+        'content-length': '6',
+        'content-md5': crypto.createHash('md5').update(' world').digest('base64'),
+        etag: '"v1"',
+      })
+      res.end(' world')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  const { body: resBody } = await request(`http://0.0.0.0:${server.address().port}`, {
+    verify: { size: true },
+    retry(err) {
+      return true
+    },
+  })
+  const text = await resBody.text()
+  t.equal(text, 'hello world', 'verify + retry works without crashing')
 })

@@ -1136,3 +1136,134 @@ test('retry: retry:0 does not retry on 503', async (t) => {
   }
   t.equal(attempts, 1, 'zero retries: only one attempt')
 })
+
+// ---------------------------------------------------------------------------
+// Bug: etag mismatch during body-retry must deliver onError (not hang)
+//
+// Previously, #maybeError(null) with #headersSent=true was a no-op — neither
+// onError nor onComplete was sent to the user, leaving the response stream
+// hanging forever.
+// ---------------------------------------------------------------------------
+
+test('retry: etag mismatch during body-retry sends onError instead of hanging', async (t) => {
+  t.plan(1)
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      // First response: 200 with etag, partial body, then drop
+      res.writeHead(200, {
+        'content-length': '10',
+        etag: '"v1"',
+      })
+      res.write('hello')
+      setTimeout(() => res.destroy(), 50)
+    } else {
+      // Retry: return 206 with *different* etag → etag mismatch
+      res.writeHead(206, {
+        'content-range': 'bytes 5-9/10',
+        'content-length': '5',
+        etag: '"v2"', // mismatch!
+      })
+      res.end('world')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  try {
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+      retry: fastRetry,
+    })
+    await body.text()
+    t.fail('should have errored due to etag mismatch')
+  } catch {
+    t.pass('onError delivered after etag mismatch during body-retry')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Bug: missing content-range during body-retry must deliver onError
+// ---------------------------------------------------------------------------
+
+test('retry: missing content-range during body-retry sends onError instead of hanging', async (t) => {
+  t.plan(1)
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.writeHead(200, {
+        'content-length': '10',
+        etag: '"cr"',
+      })
+      res.write('hello')
+      setTimeout(() => res.destroy(), 50)
+    } else {
+      // Retry: return 206 but WITHOUT content-range
+      res.writeHead(206, {
+        'content-length': '5',
+        etag: '"cr"',
+      })
+      res.end('world')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  try {
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+      retry: fastRetry,
+    })
+    await body.text()
+    t.fail('should have errored due to missing content-range')
+  } catch {
+    t.pass('onError delivered after missing content-range during body-retry')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 1xx informational responses must pass through without setting #headersSent
+// ---------------------------------------------------------------------------
+
+test('retry: 1xx status code passes through without breaking subsequent 200', async (t) => {
+  t.plan(2)
+  // Use a mock dispatch to send 1xx followed by 200, since undici strips 1xx
+  const mockDispatch = (opts, handler) => {
+    handler.onConnect(() => {})
+    // Informational 100 Continue
+    handler.onHeaders(100, {}, () => {})
+    // Real response
+    handler.onHeaders(200, { 'content-length': '5' }, () => {})
+    handler.onData(Buffer.from('hello'))
+    handler.onComplete({})
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  const result = await new Promise((resolve, reject) => {
+    let statusCode
+    const chunks = []
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: { count: 1 } },
+      {
+        onConnect() {},
+        onHeaders(sc) {
+          statusCode = sc
+          return true
+        },
+        onData(chunk) {
+          chunks.push(chunk)
+        },
+        onComplete() {
+          resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  t.equal(result.statusCode, 200, '200 response delivered after 1xx')
+  t.equal(result.body, 'hello', 'body delivered correctly')
+})

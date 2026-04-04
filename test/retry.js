@@ -72,3 +72,39 @@ test('retry destroy post response', (t) => {
     t.equal(text, 'asdend')
   })
 })
+
+test('retry rejects forged 206 with excess body bytes', (t) => {
+  t.plan(3)
+
+  let x = 0
+  const server = createServer((req, res) => {
+    if (x === 0) {
+      t.pass()
+      res.setHeader('etag', '123')
+      res.setHeader('content-length', '5')
+      res.write('use')
+      setTimeout(() => {
+        res.destroy()
+      }, 1e2)
+    } else if (x === 1) {
+      t.same(req.headers.range, 'bytes=3-4')
+      res.setHeader('content-range', 'bytes 3-4/5')
+      res.setHeader('etag', '123')
+      res.statusCode = 206
+      // Send more bytes than the claimed range
+      res.end('r1INJECTED_EXTRA_BYTES')
+    }
+    x++
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`)
+    try {
+      await body.text()
+      t.fail('should have thrown')
+    } catch (err) {
+      t.pass()
+    }
+  })
+})

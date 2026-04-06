@@ -375,6 +375,94 @@ test('dns: connection error sets record.expires=0 and record.timeout', (t) => {
 // with 500 again, the errored count increments to 2 (not resets to 1).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Regression: after a transport error, re-resolved DNS records must NOT
+// carry over the old record's timeout.  Previously, resolve() copied
+// timeout from old records, so even after a fresh DNS lookup the record
+// was still blacklisted and every request got "No available DNS records".
+// ---------------------------------------------------------------------------
+
+test('dns: re-resolved records are usable after transport error (timeout not carried over)', async (t) => {
+  t.plan(1)
+
+  let callCount = 0
+  const dnsInterceptor = interceptors.dns()
+
+  // Mock dispatch: first call triggers a transport error, second call succeeds.
+  const mockDispatch = dnsInterceptor((opts, handler) => {
+    callCount++
+    if (callCount === 1) {
+      // Simulate connection refused — triggers record.expires=0, record.timeout=now+10s
+      const err = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
+      handler.onError(err)
+    } else {
+      // Succeed
+      handler.onHeaders(200, {}, () => {})
+      handler.onComplete([])
+    }
+  })
+
+  // First request — connection error. Sets record.expires=0, record.timeout=now+10s.
+  await new Promise((resolve) => {
+    mockDispatch(
+      {
+        origin: 'http://localhost:9999',
+        path: '/',
+        method: 'GET',
+        headers: {},
+        dns: { ttl: 1 }, // 1ms TTL so records expire immediately
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError() {
+          resolve()
+        },
+      },
+    )
+  })
+
+  // Wait for TTL to expire so next request forces DNS re-resolution.
+  await new Promise((r) => setTimeout(r, 50))
+
+  // Second request — DNS re-resolves (records expired). With the fix,
+  // the fresh record has timeout=0 and is usable. Without the fix,
+  // timeout was carried over from the old record and the request would
+  // fail with "No available DNS records found".
+  const result = await new Promise((resolve) => {
+    mockDispatch(
+      {
+        origin: 'http://localhost:9999',
+        path: '/',
+        method: 'GET',
+        headers: {},
+        dns: { ttl: 1 },
+      },
+      {
+        onConnect() {},
+        onHeaders(sc) {
+          resolve({ status: sc })
+        },
+        onData() {},
+        onComplete() {},
+        onError(err) {
+          resolve({ error: err })
+        },
+      },
+    )
+  })
+
+  if (result.error) {
+    t.fail(`should not have thrown: ${result.error.message}`)
+  } else {
+    t.equal(result.status, 200, 'second request succeeds after re-resolve (timeout was reset)')
+  }
+})
+
 test('dns: errored counter survives DNS re-resolution', async (t) => {
   t.plan(1)
 

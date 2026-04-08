@@ -1992,15 +1992,19 @@ test('cache: cached non-public response is not served to request with Authorizat
 })
 
 // ---------------------------------------------------------------------------
-// Conditional request headers bypass cache
+// Conditional request headers (If-None-Match / If-Modified-Since)
 // ---------------------------------------------------------------------------
 
-test('cache: If-None-Match bypasses cache', async (t) => {
-  t.plan(1)
+test('cache: If-None-Match returns 304 when etag matches cached entry', async (t) => {
+  t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"abc123"',
+    })
     res.end('ok')
   })
   t.teardown(server.close.bind(server))
@@ -2015,17 +2019,28 @@ test('cache: If-None-Match bypasses cache', async (t) => {
     cache: { store },
   }
 
+  // Populate cache.
   await rawRequest(dispatch, base)
-  await rawRequest(dispatch, { ...base, headers: { 'if-none-match': '"abc"' } })
-  t.equal(hits, 2, 'If-None-Match causes cache bypass')
+
+  // If-None-Match with matching etag should return 304 from cache.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': '"abc123"' },
+  })
+  t.equal(result.statusCode, 304, 'matching etag returns 304')
+  t.equal(hits, 1, 'server not contacted for conditional hit')
 })
 
-test('cache: If-Modified-Since bypasses cache', async (t) => {
-  t.plan(1)
+test('cache: If-None-Match with weak etag comparison returns 304', async (t) => {
+  t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: 'W/"weak1"',
+    })
     res.end('ok')
   })
   t.teardown(server.close.bind(server))
@@ -2041,9 +2056,148 @@ test('cache: If-Modified-Since bypasses cache', async (t) => {
   }
 
   await rawRequest(dispatch, base)
+
+  // Strong etag in request should weak-match cached W/ etag.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': '"weak1"' },
+  })
+  t.equal(result.statusCode, 304, 'weak comparison matches')
+  t.equal(hits, 1, 'server not contacted')
+})
+
+test('cache: If-None-Match with non-matching etag bypasses to origin', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"abc123"',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // Non-matching etag should bypass cache and hit origin.
+  await rawRequest(dispatch, {
+    ...base,
+    headers: { 'if-none-match': '"different"' },
+  })
+  t.equal(hits, 2, 'non-matching etag bypasses to origin')
+})
+
+test('cache: If-None-Match with wildcard * returns 304', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"any"',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': '*' },
+  })
+  t.equal(result.statusCode, 304, 'wildcard If-None-Match returns 304')
+})
+
+test('cache: If-Modified-Since returns 304 when resource not modified', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      'last-modified': 'Wed, 01 Jan 2025 00:00:00 GMT',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // If-Modified-Since is after Last-Modified — not modified.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-modified-since': 'Thu, 02 Jan 2025 00:00:00 GMT' },
+  })
+  t.equal(result.statusCode, 304, 'not modified returns 304')
+  t.equal(hits, 1, 'server not contacted')
+})
+
+test('cache: If-Modified-Since bypasses to origin when resource was modified', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      'last-modified': 'Thu, 02 Jan 2025 00:00:00 GMT',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // If-Modified-Since is before Last-Modified — modified since then.
   await rawRequest(dispatch, {
     ...base,
     headers: { 'if-modified-since': 'Wed, 01 Jan 2025 00:00:00 GMT' },
   })
-  t.equal(hits, 2, 'If-Modified-Since causes cache bypass')
+  t.equal(hits, 2, 'modified resource bypasses to origin')
 })

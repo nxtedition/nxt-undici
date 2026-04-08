@@ -1990,3 +1990,60 @@ test('cache: cached non-public response is not served to request with Authorizat
   })
   t.equal(hits, 2, 'non-public cached entry not served for authorized request')
 })
+
+// ---------------------------------------------------------------------------
+// Conditional request headers bypass cache
+// ---------------------------------------------------------------------------
+
+test('cache: If-None-Match bypasses cache', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+  await rawRequest(dispatch, { ...base, headers: { 'if-none-match': '"abc"' } })
+  t.equal(hits, 2, 'If-None-Match causes cache bypass')
+})
+
+test('cache: If-Modified-Since bypasses cache', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+  await rawRequest(dispatch, {
+    ...base,
+    headers: { 'if-modified-since': 'Wed, 01 Jan 2025 00:00:00 GMT' },
+  })
+  t.equal(hits, 2, 'If-Modified-Since causes cache bypass')
+})

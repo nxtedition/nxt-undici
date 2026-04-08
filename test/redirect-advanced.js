@@ -251,3 +251,128 @@ test('redirect: 303 cross-origin strips all headers without crashing', async (t)
   })
   t.equal(status, 200, '303 cross-origin redirect succeeds without undefined headers')
 })
+
+// ---------------------------------------------------------------------------
+// Cross-origin redirect strips authorization and cookie headers
+// ---------------------------------------------------------------------------
+
+test('redirect: cross-origin redirect strips authorization and cookie', async (t) => {
+  t.plan(3)
+  const serverB = await startServer((req, res) => {
+    t.notOk(req.headers.authorization, 'authorization header must be stripped on cross-origin')
+    t.notOk(req.headers.cookie, 'cookie header must be stripped on cross-origin')
+    res.writeHead(200)
+    res.end()
+  })
+  t.teardown(serverB.close.bind(serverB))
+
+  const serverA = await startServer((req, res) => {
+    res.writeHead(301, { location: `http://127.0.0.1:${serverB.address().port}/dest` })
+    res.end()
+  })
+  t.teardown(serverA.close.bind(serverA))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${serverA.address().port}`,
+    path: '/start',
+    method: 'GET',
+    headers: { authorization: 'Bearer secret', cookie: 'session=abc' },
+    follow: 5,
+  })
+  t.equal(status, 200)
+})
+
+// ---------------------------------------------------------------------------
+// Same-origin redirect preserves authorization header
+// ---------------------------------------------------------------------------
+
+test('redirect: same-origin redirect preserves authorization header', async (t) => {
+  t.plan(2)
+  let authOnRedirect = null
+  let hop = 0
+  const server = await startServer((req, res) => {
+    hop++
+    if (hop === 1) {
+      res.writeHead(301, { location: '/dest' })
+      res.end()
+    } else {
+      authOnRedirect = req.headers.authorization
+      res.writeHead(200)
+      res.end()
+    }
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/start',
+    method: 'GET',
+    headers: { authorization: 'Bearer secret' },
+    follow: 5,
+  })
+  t.equal(status, 200)
+  t.ok(authOnRedirect, 'authorization preserved for same-origin redirect')
+})
+
+// ---------------------------------------------------------------------------
+// 307 redirect preserves method (PUT stays PUT)
+// ---------------------------------------------------------------------------
+
+test('redirect: 307 preserves original method', async (t) => {
+  t.plan(2)
+  let methodOnRedirect = null
+  let hop = 0
+  const server = await startServer((req, res) => {
+    hop++
+    if (hop === 1) {
+      res.writeHead(307, { location: '/dest' })
+      res.end()
+    } else {
+      methodOnRedirect = req.method
+      res.writeHead(200)
+      res.end()
+    }
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/start',
+    method: 'PUT',
+    headers: { 'content-length': '0' },
+    follow: 5,
+  })
+  t.equal(status, 200)
+  t.equal(methodOnRedirect, 'PUT', '307 should preserve PUT method')
+})
+
+// ---------------------------------------------------------------------------
+// Missing location header on redirect throws
+// ---------------------------------------------------------------------------
+
+test('redirect: missing location header throws error', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    // 301 without location header
+    res.writeHead(301)
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  try {
+    await rawRequest(dispatch, {
+      origin: `http://127.0.0.1:${server.address().port}`,
+      path: '/',
+      method: 'GET',
+      headers: {},
+      follow: 5,
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.match(err.message, /Missing redirection location/)
+  }
+})

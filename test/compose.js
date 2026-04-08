@@ -91,3 +91,46 @@ test('compose chains multiple interceptors', (t) => {
   t.strictSame(order, ['second', 'first', 'dispatch'])
   t.end()
 })
+
+test('compose throws on interceptor that returns invalid dispatch', (t) => {
+  const dispatcher = {
+    dispatch(opts, handler) {},
+  }
+
+  // Interceptor that returns a function with wrong arity (1 arg instead of 2)
+  const badInterceptor = (dispatch) => (opts) => {}
+
+  t.throws(() => compose(dispatcher, badInterceptor), /invalid interceptor/)
+  t.end()
+})
+
+test('compose throws on interceptor that returns null', (t) => {
+  const dispatcher = {
+    dispatch(opts, handler) {},
+  }
+
+  const nullInterceptor = (dispatch) => null
+
+  t.throws(() => compose(dispatcher, nullInterceptor), /invalid interceptor/)
+  t.end()
+})
+
+test('compose with raw dispatch function (not object)', (t) => {
+  const calls = []
+  const rawDispatch = (opts, handler) => {
+    calls.push('raw')
+    handler.onConnect(() => {})
+    handler.onHeaders(200, {}, () => {})
+    handler.onComplete({})
+  }
+
+  const interceptor = (dispatch) => (opts, handler) => {
+    calls.push('interceptor')
+    return dispatch(opts, handler)
+  }
+
+  const dispatch = compose(rawDispatch, interceptor)
+  dispatch({}, { onConnect() {}, onHeaders() {}, onComplete() {} })
+  t.strictSame(calls, ['interceptor', 'raw'])
+  t.end()
+})

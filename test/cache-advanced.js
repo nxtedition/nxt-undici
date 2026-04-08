@@ -1672,3 +1672,189 @@ test('cache: unquoted etag (no double-quotes) is treated as unusable', async (t)
   t.ok(entry, 'entry stored in cache')
   t.equal(entry.etag, '', 'unquoted etag is not usable; stored as empty string')
 })
+
+// ---------------------------------------------------------------------------
+// only-if-cached with no cache entry returns 504
+// ---------------------------------------------------------------------------
+
+test('cache: only-if-cached with no entry returns 504', async (t) => {
+  t.plan(1)
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+
+  const status = await rawRequest(dispatch, {
+    origin: 'http://0.0.0.0:1',
+    path: '/nonexistent',
+    method: 'GET',
+    headers: { 'cache-control': 'only-if-cached' },
+    cache: { store },
+  })
+  t.equal(status, 504, 'only-if-cached without entry yields 504')
+})
+
+// ---------------------------------------------------------------------------
+// Cache respects vary headers — different accept → miss
+// ---------------------------------------------------------------------------
+
+test('cache: vary header causes miss on different accept', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      vary: 'accept',
+      'content-type': 'text/plain',
+    })
+    res.end(`hit ${hits}`)
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  }
+
+  // First request with accept: text/html
+  await rawRequest(dispatch, { ...base, headers: { accept: 'text/html' } })
+  // Second request with different accept — should miss cache
+  await rawRequest(dispatch, { ...base, headers: { accept: 'application/json' } })
+
+  t.equal(hits, 2, 'different accept header causes cache miss due to vary')
+})
+
+// ---------------------------------------------------------------------------
+// Cache: no-store request header bypasses cache and does not store
+// ---------------------------------------------------------------------------
+
+test('cache: no-store response is not cached', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'text/plain',
+    })
+    res.end('ephemeral')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, opts)
+  await rawRequest(dispatch, opts)
+
+  t.equal(hits, 2, 'no-store response should not be cached')
+})
+
+// ---------------------------------------------------------------------------
+// Cache: private response is not cached
+// ---------------------------------------------------------------------------
+
+test('cache: private response is not cached', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 'private, max-age=60',
+      'content-type': 'text/plain',
+    })
+    res.end('private data')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, opts)
+  await rawRequest(dispatch, opts)
+
+  t.equal(hits, 2, 'private response should not be cached')
+})
+
+// ---------------------------------------------------------------------------
+// Cache: request with authorization header requires cache-control: public
+// ---------------------------------------------------------------------------
+
+test('cache: authorized request not cached without public directive', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+    })
+    res.end('secret')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { authorization: 'Bearer token' },
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, opts)
+  await rawRequest(dispatch, opts)
+
+  t.equal(hits, 2, 'authorized request without public directive not cached')
+})
+
+// ---------------------------------------------------------------------------
+// Cache: POST requests bypass cache
+// ---------------------------------------------------------------------------
+
+test('cache: POST requests bypass cache', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'POST',
+    headers: { 'content-length': '0' },
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, opts)
+  await rawRequest(dispatch, opts)
+
+  t.equal(hits, 2, 'POST requests should bypass cache')
+})

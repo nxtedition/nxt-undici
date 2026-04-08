@@ -155,7 +155,6 @@ export interface CacheValue {
   etag?: string
   vary?: Record<string, string | string[]>
   cachedAt: number
-  staleAt: number
   deleteAt?: number
 }
 
@@ -168,7 +167,6 @@ export interface CacheGetResult {
   cacheControlDirectives?: Record<string, unknown>
   vary?: Record<string, string | string[]>
   cachedAt: number
-  staleAt: number
   deleteAt: number
 }
 

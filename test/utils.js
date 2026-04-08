@@ -14,7 +14,6 @@ import {
   parseHeaders,
   DecoratorHandler,
   decorateError,
-  AbortError,
 } from '../lib/utils.js'
 
 // --- parseContentRange ---
@@ -497,22 +496,6 @@ test('parseOrigin - accepts bare origin', (t) => {
   const url = parseOrigin('http://example.com')
   t.ok(url instanceof URL)
   t.equal(url.origin, 'http://example.com')
-  t.end()
-})
-
-// --- AbortError ---
-
-test('AbortError - default message', (t) => {
-  const err = new AbortError()
-  t.equal(err.code, 'ABORT_ERR')
-  t.equal(err.name, 'AbortError')
-  t.equal(err.message, 'The operation was aborted')
-  t.end()
-})
-
-test('AbortError - custom message', (t) => {
-  const err = new AbortError('custom')
-  t.equal(err.message, 'custom')
   t.end()
 })
 

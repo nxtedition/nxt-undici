@@ -17,6 +17,13 @@ function fastRetryMax(max) {
   return (err, retryCount) => retryCount < max
 }
 
+async function startServer(handler) {
+  const server = createServer(handler)
+  server.listen(0)
+  await once(server, 'listening')
+  return server
+}
+
 test('retry respects max retry count', (t) => {
   t.plan(1)
 
@@ -1266,4 +1273,169 @@ test('retry: 1xx status code passes through without breaking subsequent 200', as
 
   t.equal(result.statusCode, 200, '200 response delivered after 1xx')
   t.equal(result.body, 'hello', 'body delivered correctly')
+})
+
+// ---------------------------------------------------------------------------
+// POST requests are not retried by default (non-idempotent)
+// ---------------------------------------------------------------------------
+
+test('retry: POST requests are not retried by default', async (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  const server = await startServer((req, res) => {
+    attempts++
+    res.statusCode = 503
+    res.end('unavailable')
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://0.0.0.0:${server.address().port}`, {
+      method: 'POST',
+      body: 'data',
+      retry: true,
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.statusCode, 503)
+    t.equal(attempts, 1, 'POST should not be retried')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// POST with idempotent: true IS retried
+// ---------------------------------------------------------------------------
+
+test('retry: POST with idempotent: true is retried', async (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  const server = await startServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.statusCode = 503
+      res.end('unavailable')
+    } else {
+      res.statusCode = 200
+      res.end('ok')
+    }
+  })
+  t.teardown(server.close.bind(server))
+
+  const { statusCode, body } = await request(`http://0.0.0.0:${server.address().port}`, {
+    method: 'POST',
+    body: 'data',
+    idempotent: true,
+    retry: fastRetry,
+  })
+  await body.dump()
+  t.equal(statusCode, 200)
+  t.equal(attempts, 2, 'POST with idempotent: true should be retried')
+})
+
+// ---------------------------------------------------------------------------
+// retry: false disables retry entirely
+// ---------------------------------------------------------------------------
+
+test('retry: retry:false disables retry', async (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  const server = await startServer((req, res) => {
+    attempts++
+    res.statusCode = 503
+    res.end('unavailable')
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://0.0.0.0:${server.address().port}`, {
+      retry: false,
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.statusCode, 503)
+    t.equal(attempts, 1, 'retry:false should not retry')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Retry on ECONNRESET network error
+// ---------------------------------------------------------------------------
+
+test('retry: retries on ECONNRESET', async (t) => {
+  t.plan(2)
+
+  let attempts = 0
+  const server = await startServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      req.socket.destroy()
+      return
+    }
+    res.statusCode = 200
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const { statusCode, body } = await request(`http://0.0.0.0:${server.address().port}`, {
+    retry: fastRetry,
+  })
+  await body.dump()
+  t.equal(statusCode, 200)
+  t.ok(attempts >= 2, 'should have retried after connection reset')
+})
+
+// ---------------------------------------------------------------------------
+// Custom retry function that throws is handled gracefully
+// ---------------------------------------------------------------------------
+
+test('retry: custom retry function that throws is handled', async (t) => {
+  t.plan(1)
+
+  const server = await startServer((req, res) => {
+    res.statusCode = 503
+    res.end('unavailable')
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://0.0.0.0:${server.address().port}`, {
+      retry: () => {
+        throw new Error('retry function exploded')
+      },
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.message, 'retry function exploded', 'thrown error from retry fn is propagated')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Retry with abort signal cancels retry delay
+// ---------------------------------------------------------------------------
+
+test('retry: abort signal cancels pending retry', async (t) => {
+  t.plan(1)
+
+  const server = await startServer((req, res) => {
+    res.statusCode = 503
+    res.end('unavailable')
+  })
+  t.teardown(server.close.bind(server))
+
+  const ac = new AbortController()
+  // Abort quickly to cancel the retry delay
+  setTimeout(() => ac.abort(), 100)
+
+  try {
+    await request(`http://0.0.0.0:${server.address().port}`, {
+      signal: ac.signal,
+      retry: 8,
+    })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.pass('request aborted during retry delay')
+  }
 })

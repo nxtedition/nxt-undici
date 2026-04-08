@@ -6,10 +6,35 @@ import { compose, interceptors } from '../lib/index.js'
 import undici from '@nxtedition/undici'
 
 // ---------------------------------------------------------------------------
-// Helper: build a dispatcher that uses only the dns interceptor
+// Helpers
 // ---------------------------------------------------------------------------
 function makeDispatch() {
   return compose(new undici.Agent(), interceptors.dns())
+}
+
+async function startServer(handler) {
+  const server = createServer(handler)
+  server.listen(0)
+  await once(server, 'listening')
+  return server
+}
+
+function rawRequest(dispatch, opts) {
+  return new Promise((resolve, reject) => {
+    let statusCode
+    dispatch(opts, {
+      onConnect() {},
+      onHeaders(sc) {
+        statusCode = sc
+        return true
+      },
+      onData() {},
+      onComplete() {
+        resolve(statusCode)
+      },
+      onError: reject,
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -548,4 +573,50 @@ test('dns: errored counter survives DNS re-resolution', async (t) => {
     500,
     'second request after re-resolution still dispatches (errored state carried over)',
   )
+})
+
+// ---------------------------------------------------------------------------
+// DNS: IP address bypasses DNS resolution
+// ---------------------------------------------------------------------------
+
+test('dns: IP address origin bypasses DNS lookup', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200, 'IP address origin works without DNS resolution')
+})
+
+// ---------------------------------------------------------------------------
+// DNS: opts.dns = false bypasses interceptor
+// ---------------------------------------------------------------------------
+
+test('dns: opts.dns=false bypasses interceptor', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    dns: false,
+  })
+  t.equal(status, 200, 'dns:false bypasses DNS interceptor')
 })

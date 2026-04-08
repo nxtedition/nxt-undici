@@ -320,3 +320,160 @@ test('verify detects body size mismatch with Content-Range on complete', (t) => 
     t.equal(capturedError?.expected, 10)
   })
 })
+
+// ---------------------------------------------------------------------------
+// verify: size check is skipped when verify.size is false
+// ---------------------------------------------------------------------------
+
+test('verify: size check skipped when verify.size is false', (t) => {
+  t.plan(1)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let completed = false
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {
+        completed = true
+      },
+      onError(err) {
+        t.fail('should not error when size check is disabled')
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, { 'content-length': '100' }, () => {})
+      handler.onData(Buffer.from('short')) // only 5 bytes, mismatched
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: { size: false, hash: false }, method: 'GET' }, fakeHandler)
+
+    t.ok(completed, 'completed without error when size check is disabled')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// verify: multiple onData calls accumulate correctly for size check
+// ---------------------------------------------------------------------------
+
+test('verify: multiple data chunks accumulate for size check', (t) => {
+  t.plan(1)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let completed = false
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {
+        completed = true
+      },
+      onError(err) {
+        t.fail('should not error when total size matches')
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, { 'content-length': '10' }, () => {})
+      handler.onData(Buffer.from('hello'))
+      handler.onData(Buffer.from('world'))
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: { size: true }, method: 'GET' }, fakeHandler)
+
+    t.ok(completed, 'completed when chunked data totals expected size')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// verify: bypass when opts.verify is falsy
+// ---------------------------------------------------------------------------
+
+test('verify: bypassed when opts.verify is falsy', (t) => {
+  t.plan(1)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let completed = false
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {
+        completed = true
+      },
+      onError(err) {
+        t.fail('should not error')
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, { 'content-length': '100', 'content-md5': 'invalid' }, () => {})
+      handler.onData(Buffer.from('short'))
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: false, method: 'GET' }, fakeHandler)
+
+    t.ok(completed, 'completed without error when verify is false')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// verify: upgrade requests bypass verification
+// ---------------------------------------------------------------------------
+
+test('verify: upgrade requests bypass verification', (t) => {
+  t.plan(1)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let completed = false
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {
+        completed = true
+      },
+      onError(err) {
+        t.fail('should not error')
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, { 'content-length': '100' }, () => {})
+      handler.onData(Buffer.from('short'))
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: { size: true }, method: 'GET', upgrade: 'websocket' }, fakeHandler)
+
+    t.ok(completed, 'completed without error for upgrade request')
+  })
+})

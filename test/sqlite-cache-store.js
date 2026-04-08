@@ -22,7 +22,6 @@ function makeValue(overrides = {}) {
     statusCode: 200,
     statusMessage: 'OK',
     cachedAt: now,
-    staleAt: now + 3600e3,
     deleteAt: now + 7200e3,
     ...overrides,
   }
@@ -71,10 +70,7 @@ test('batch read-through: expired batch entry is not returned by get()', (t) => 
   t.teardown(() => store.close())
 
   const past = Date.now() - 10000
-  store.set(
-    makeKey({ path: '/expired-batch' }),
-    makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }),
-  )
+  store.set(makeKey({ path: '/expired-batch' }), makeValue({ deleteAt: past, cachedAt: past - 2 }))
   // Not flushed yet — entry lives only in the batch. It is expired, so get() must return undefined.
   t.equal(
     store.get(makeKey({ path: '/expired-batch' })),
@@ -123,7 +119,6 @@ test('basic get/set round-trip', async (t) => {
     end: 11,
     headers: { 'content-type': 'text/plain' },
     cachedAt: now,
-    staleAt: now + 3600e3,
     deleteAt: now + 7200e3,
   })
 
@@ -151,10 +146,7 @@ test('get returns undefined for expired entry', async (t) => {
   t.teardown(() => store.close())
 
   const past = Date.now() - 10000
-  store.set(
-    makeKey({ path: '/expired' }),
-    makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }),
-  )
+  store.set(makeKey({ path: '/expired' }), makeValue({ deleteAt: past, cachedAt: past - 2 }))
   await flush()
   t.equal(store.get(makeKey({ path: '/expired' })), undefined)
   t.end()
@@ -176,7 +168,6 @@ test('expired entry does not block valid entry with later deleteAt (bug fix)', a
     makeValue({
       vary: { 'accept-encoding': 'gzip' },
       deleteAt: past,
-      staleAt: past - 1,
       cachedAt: past - 2,
     }),
   )
@@ -187,7 +178,6 @@ test('expired entry does not block valid entry with later deleteAt (bug fix)', a
       end: 12,
       vary: { 'accept-encoding': 'deflate' },
       cachedAt: now,
-      staleAt: now + 3600e3,
       deleteAt: now + 7200e3,
     }),
   )
@@ -209,7 +199,6 @@ test('expired entry with matching vary must not be returned (bug fix)', async (t
     makeValue({
       vary: { 'accept-encoding': 'gzip' },
       deleteAt: past,
-      staleAt: past - 1,
       cachedAt: past - 2,
     }),
   )
@@ -279,7 +268,6 @@ test('batch flush handles SQLITE_FULL with eviction and retries', async (t) => {
         body: largeBody,
         end: largeBody.byteLength,
         deleteAt: past,
-        staleAt: past - 1,
         cachedAt: past - 2,
       }),
     )
@@ -294,7 +282,6 @@ test('batch flush handles SQLITE_FULL with eviction and retries', async (t) => {
       body: Buffer.from('new'),
       end: 3,
       cachedAt: now,
-      staleAt: now + 3600e3,
       deleteAt: now + 7200e3,
     }),
   )
@@ -324,7 +311,6 @@ test('flush emits warning for body too large to fit after eviction', async (t) =
       body: tooBig,
       end: tooBig.byteLength,
       cachedAt: now,
-      staleAt: now + 3600e3,
       deleteAt: now + 7200e3,
     }),
   )
@@ -418,7 +404,6 @@ test('set() never throws — DB errors surface as process warnings', async (t) =
           body,
           end: body.byteLength,
           cachedAt: now,
-          staleAt: now + 3600e3,
           deleteAt: now + 7200e3 + i,
         }),
       )
@@ -445,7 +430,6 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', async
       body: Buffer.from('old'),
       end: 3,
       cachedAt: now - 5000,
-      staleAt: now - 1000,
       deleteAt: now + 1000,
     }),
   )
@@ -457,7 +441,6 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', async
       body: Buffer.from('fresh'),
       end: 5,
       cachedAt: now,
-      staleAt: now + 3600e3,
       deleteAt: now + 7200e3,
     }),
   )
@@ -480,7 +463,7 @@ test('purgeStale always deletes expired entries regardless of call frequency', a
   const past = Date.now() - 120e3
   const key = makeKey({ path: '/purge-test' })
 
-  store.set(key, makeValue({ deleteAt: past, staleAt: past - 1, cachedAt: past - 2 }))
+  store.set(key, makeValue({ deleteAt: past, cachedAt: past - 2 }))
   await flush()
 
   store.purgeStale()
@@ -493,7 +476,6 @@ test('purgeStale always deletes expired entries regardless of call frequency', a
       body: Buffer.from('fresh'),
       end: 5,
       cachedAt: now,
-      staleAt: now + 3600e3,
       deleteAt: now + 7200e3,
     }),
   )
@@ -947,20 +929,16 @@ test('cacheControlDirectives stored and retrieved', async (t) => {
   t.end()
 })
 
-test('cachedAt, staleAt, deleteAt round-trip', async (t) => {
+test('cachedAt, deleteAt round-trip', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
   const now = Date.now()
-  store.set(
-    makeKey({ path: '/ts' }),
-    makeValue({ cachedAt: now, staleAt: now + 1800e3, deleteAt: now + 3600e3 }),
-  )
+  store.set(makeKey({ path: '/ts' }), makeValue({ cachedAt: now, deleteAt: now + 3600e3 }))
   await flush()
 
   const result = store.get(makeKey({ path: '/ts' }))
   t.equal(result.cachedAt, now)
-  t.equal(result.staleAt, now + 1800e3)
   t.equal(result.deleteAt, now + 3600e3)
   t.end()
 })
@@ -1104,7 +1082,7 @@ test('assertCacheValue — throws on non-number numeric fields', (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
-  for (const field of ['statusCode', 'cachedAt', 'staleAt', 'deleteAt']) {
+  for (const field of ['statusCode', 'cachedAt', 'deleteAt']) {
     t.throws(
       () => store.set(makeKey(), makeValue({ [field]: 'not-a-number' })),
       new RegExp(`expected value\\.${field} to be number`),

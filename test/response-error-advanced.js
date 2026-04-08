@@ -208,3 +208,97 @@ test('response-error: large error body is truncated at 256 KB', async (t) => {
     t.ok(bodyLen <= 256 * 1024, `body length ${bodyLen} should be <= 256KB`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Bug fix: onHeaders must return true for 400+ so the upstream keeps sending
+// data and the error body is fully captured. Previously returned undefined
+// which could pause data flow for large error bodies.
+// ---------------------------------------------------------------------------
+
+test('response-error: onHeaders returns true for 400+ (unit test)', (t) => {
+  t.plan(2)
+
+  import('../lib/interceptor/response-error.js').then(({ default: responseError }) => {
+    const interceptor = responseError()
+
+    let capturedError
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {},
+      onError(err) {
+        capturedError = err
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      const ret = handler.onHeaders(
+        500,
+        { 'content-type': 'application/json', 'content-length': '25' },
+        () => {},
+      )
+      // The return value must be truthy so the upstream continues sending data
+      t.ok(ret, 'onHeaders should return true for 400+ status to keep data flowing')
+      handler.onData(Buffer.from('{"error":"server error"}'))
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch(
+      {
+        error: true,
+        origin: 'http://example.com',
+        path: '/test',
+        method: 'GET',
+        headers: {},
+      },
+      fakeHandler,
+    )
+
+    t.ok(capturedError, 'error should be captured with body')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Error response with no content-type still throws
+// ---------------------------------------------------------------------------
+
+test('response-error: error with no content-type still throws', async (t) => {
+  t.plan(1)
+  const server = await startServer((req, res) => {
+    res.writeHead(502)
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://127.0.0.1:${server.address().port}`, { retry: false })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.equal(err.statusCode, 502)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Network error also gets decorated with req info
+// ---------------------------------------------------------------------------
+
+test('response-error: network error has req info attached', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    res.destroy()
+  })
+  t.teardown(server.close.bind(server))
+
+  try {
+    await request(`http://127.0.0.1:${server.address().port}/api`, { retry: false })
+    t.fail('should have thrown')
+  } catch (err) {
+    t.ok(err.req, 'err.req should be set on network error')
+    t.equal(err.req.path, '/api')
+  }
+})

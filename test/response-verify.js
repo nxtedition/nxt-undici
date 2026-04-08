@@ -162,7 +162,7 @@ test('verify detects content-length mismatch via interceptor unit test', (t) => 
     const dispatch = interceptor(fakeDispatch)
     dispatch({ verify: { size: true }, method: 'GET' }, fakeHandler)
 
-    t.ok(capturedError?.message.includes('Content-Length mismatch'))
+    t.ok(capturedError?.message.includes('body size mismatch'))
     t.equal(capturedError?.expected, 100)
   })
 })
@@ -250,4 +250,73 @@ test('verify: retry after mid-stream failure does not crash due to stale #pos', 
   })
   const text = await resBody.text()
   t.equal(text, 'hello world', 'verify + retry works without crashing')
+})
+
+test('verify detects body exceeding Content-Range via interceptor unit test', (t) => {
+  t.plan(2)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let capturedError
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {},
+      onError(err) {
+        capturedError = err
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      // content-range: bytes 0-2/3 means expected body = 2 bytes
+      handler.onHeaders(206, { 'content-range': 'bytes 0-1/2', 'content-length': '2' }, () => {})
+      handler.onData(Buffer.from('INJECTED_EXTRA_BYTES')) // way more than 2 bytes
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: { size: true }, method: 'GET' }, fakeHandler)
+
+    t.ok(capturedError?.message.includes('exceeded Content-Range'))
+    t.equal(capturedError?.expected, 2)
+  })
+})
+
+test('verify detects body size mismatch with Content-Range on complete', (t) => {
+  t.plan(2)
+
+  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
+    const interceptor = responseVerify()
+
+    let capturedError
+    const fakeHandler = {
+      onConnect(abort) {},
+      onHeaders(sc, headers, resume) {
+        return true
+      },
+      onData(chunk) {},
+      onComplete(trailers) {},
+      onError(err) {
+        capturedError = err
+      },
+    }
+
+    const fakeDispatch = (opts, handler) => {
+      handler.onConnect(() => {})
+      // content-range: bytes 0-9/10 means expected body = 10 bytes
+      handler.onHeaders(206, { 'content-range': 'bytes 0-9/10', 'content-length': '10' }, () => {})
+      handler.onData(Buffer.from('short')) // only 5 bytes
+      handler.onComplete({})
+    }
+
+    const dispatch = interceptor(fakeDispatch)
+    dispatch({ verify: { size: true }, method: 'GET' }, fakeHandler)
+
+    t.ok(capturedError?.message.includes('body size mismatch'))
+    t.equal(capturedError?.expected, 10)
+  })
 })

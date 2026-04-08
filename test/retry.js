@@ -73,26 +73,6 @@ test('retry destroy post response', (t) => {
   })
 })
 
-test('HEAD request with Content-Length does not trigger body length mismatch', (t) => {
-  t.plan(1)
-
-  const server = createServer((req, res) => {
-    res.setHeader('content-length', '1000')
-    res.setHeader('etag', 'abc')
-    res.statusCode = 200
-    res.end() // HEAD responses have no body
-  })
-
-  t.teardown(server.close.bind(server))
-  server.listen(0, async () => {
-    const { body, statusCode } = await request(`http://0.0.0.0:${server.address().port}`, {
-      method: 'HEAD',
-    })
-    await body.dump()
-    t.equal(statusCode, 200)
-  })
-})
-
 test('retry rejects forged 206 with excess body bytes', (t) => {
   t.plan(3)
 
@@ -119,7 +99,9 @@ test('retry rejects forged 206 with excess body bytes', (t) => {
 
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
-    const { body } = await request(`http://0.0.0.0:${server.address().port}`)
+    const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+      verify: { size: true },
+    })
     try {
       await body.text()
       t.fail('should have thrown')

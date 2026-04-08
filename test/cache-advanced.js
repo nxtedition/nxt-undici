@@ -1858,3 +1858,135 @@ test('cache: POST requests bypass cache', async (t) => {
 
   t.equal(hits, 2, 'POST requests should bypass cache')
 })
+
+// ---------------------------------------------------------------------------
+// Pragma: no-cache (RFC 9111 Section 5.4)
+// ---------------------------------------------------------------------------
+
+test('cache: Pragma no-cache bypasses cache when Cache-Control is absent', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  // Populate cache.
+  await rawRequest(dispatch, base)
+  t.equal(hits, 1, 'sanity: first request hits server')
+
+  // Second request with Pragma: no-cache should bypass cache.
+  const status = await rawRequest(dispatch, {
+    ...base,
+    headers: { pragma: 'no-cache' },
+  })
+  t.equal(hits, 2, 'Pragma: no-cache bypasses cache')
+})
+
+test('cache: Pragma no-cache is ignored when Cache-Control is present', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  // Populate cache.
+  await rawRequest(dispatch, base)
+
+  // Pragma: no-cache should be ignored when Cache-Control is also present.
+  await rawRequest(dispatch, {
+    ...base,
+    headers: { pragma: 'no-cache', 'cache-control': '' },
+  })
+  t.equal(hits, 1, 'Pragma ignored when Cache-Control header is present')
+})
+
+// ---------------------------------------------------------------------------
+// Authorization on lookup side (RFC 9111 Section 3.5)
+// ---------------------------------------------------------------------------
+
+test('cache: cached public response is not served to request with Authorization from different user', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60, public', 'content-type': 'text/plain' })
+    res.end('public data')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { authorization: 'Bearer token-a' },
+    cache: { store },
+  }
+
+  // Populate cache with authorized request (response is public).
+  await rawRequest(dispatch, base)
+
+  // Same auth header should serve from cache.
+  await rawRequest(dispatch, base)
+  t.equal(hits, 1, 'public cached response served for authorized request')
+})
+
+test('cache: cached non-public response is not served to request with Authorization', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    // First request has no Authorization, so response gets cached.
+    // Response has no 'public' directive.
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('data')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  // Populate cache without Authorization.
+  await rawRequest(dispatch, base)
+
+  // Request with Authorization should not use the non-public cached entry.
+  await rawRequest(dispatch, {
+    ...base,
+    headers: { authorization: 'Bearer secret' },
+  })
+  t.equal(hits, 2, 'non-public cached entry not served for authorized request')
+})

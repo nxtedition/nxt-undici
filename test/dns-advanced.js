@@ -225,21 +225,32 @@ test('dns: balance:hash selects a record via hash of pathname', (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// Second request within the TTL window uses the cached record (no re-resolve).
+// Pre-emptive DNS refresh: when any record is past half its TTL, a background
+// resolve is kicked off so the next request gets fresh records without blocking.
+//
+// We exercise this by making N requests across the half-TTL boundary and
+// asserting they all succeed — with no pre-emptive refresh, requests past the
+// TTL would need a synchronous re-resolve but still succeed, so this test
+// mainly guards against regressions that would break the path entirely
+// (e.g. unhandled rejections from the fire-and-forget resolve).
 // ---------------------------------------------------------------------------
 
-test('dns: second request within TTL reuses cached record', (t) => {
+test('dns: pre-emptive refresh keeps records usable across TTL boundaries', async (t) => {
   t.plan(1)
   const server = createServer((req, res) => {
     res.writeHead(200)
     res.end()
   })
+  server.listen(0)
+  await once(server, 'listening')
   t.teardown(server.close.bind(server))
-  server.listen(0, async () => {
-    const dispatch = compose(new undici.Agent(), interceptors.dns())
-    const port = server.address().port
+  const port = server.address().port
 
-    // First request: cache miss → populates cache with expires = now + 500ms
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const ttl = 100
+
+  let successes = 0
+  for (let i = 0; i < 5; i++) {
     await new Promise((resolve, reject) => {
       dispatch(
         {
@@ -247,47 +258,28 @@ test('dns: second request within TTL reuses cached record', (t) => {
           path: '/',
           method: 'GET',
           headers: {},
-          dns: { ttl: 500 },
+          dns: { ttl },
         },
         {
           onConnect() {},
           onHeaders(sc) {
-            resolve(sc)
+            if (sc === 200) successes++
             return true
           },
           onData() {},
-          onComplete() {},
+          onComplete() {
+            resolve()
+          },
           onError: reject,
         },
       )
     })
+    // Sleep past the half-TTL threshold so the next iteration triggers
+    // the pre-emptive resolve path.
+    await new Promise((r) => setTimeout(r, ttl))
+  }
 
-    // Second request immediately: record exists and is still valid — the
-    // cached record is reused (no re-resolution).
-    await new Promise((resolve, reject) => {
-      dispatch(
-        {
-          origin: `http://localhost:${port}`,
-          path: '/',
-          method: 'GET',
-          headers: {},
-          dns: { ttl: 500 },
-        },
-        {
-          onConnect() {},
-          onHeaders(sc) {
-            resolve(sc)
-            return true
-          },
-          onData() {},
-          onComplete() {},
-          onError: reject,
-        },
-      )
-    })
-
-    t.ok(true, 'two requests within TTL window succeeded')
-  })
+  t.equal(successes, 5, 'all requests succeeded across TTL boundaries')
 })
 
 // ---------------------------------------------------------------------------

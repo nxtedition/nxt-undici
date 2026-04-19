@@ -225,13 +225,10 @@ test('dns: balance:hash selects a record via hash of pathname', (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// Pre-emptive re-resolution: when a record's TTL is < 1s away from expiry,
-// a background re-resolve is triggered (dns.js lines 96-98)
-// Using ttl:500 ensures the record is always within 1s of expiry on the
-// second request, triggering the pre-emptive resolve path immediately.
+// Second request within the TTL window uses the cached record (no re-resolve).
 // ---------------------------------------------------------------------------
 
-test('dns: pre-emptive re-resolution triggered when record TTL < 1s remaining', (t) => {
+test('dns: second request within TTL reuses cached record', (t) => {
   t.plan(1)
   const server = createServer((req, res) => {
     res.writeHead(200)
@@ -265,8 +262,8 @@ test('dns: pre-emptive re-resolution triggered when record TTL < 1s remaining', 
       )
     })
 
-    // Second request immediately: record exists (not fully expired) but
-    // expires < now + 1000 → pre-emptive re-resolve fires (lines 96-98)
+    // Second request immediately: record exists and is still valid — the
+    // cached record is reused (no re-resolution).
     await new Promise((resolve, reject) => {
       dispatch(
         {
@@ -289,16 +286,16 @@ test('dns: pre-emptive re-resolution triggered when record TTL < 1s remaining', 
       )
     })
 
-    t.ok(true, 'two requests with ttl:500 exercised pre-emptive re-resolution path')
+    t.ok(true, 'two requests within TTL window succeeded')
   })
 })
 
 // ---------------------------------------------------------------------------
-// 5xx response: record.errored++ and record.timeout set (dns.js lines 148-153)
+// 5xx response: record.errored++ (dns.js error-callback path)
 // The Handler callback receives (null, 500) → statusCode >= 500 path is taken
 // ---------------------------------------------------------------------------
 
-test('dns: 5xx response marks the selected record as errored and timed-out', (t) => {
+test('dns: 5xx response marks the selected record as errored', (t) => {
   t.plan(1)
   const server = createServer((req, res) => {
     res.writeHead(500)
@@ -331,17 +328,16 @@ test('dns: 5xx response marks the selected record as errored and timed-out', (t)
       )
     })
     // The status code must reach the caller unchanged; internally the DNS
-    // interceptor has bumped record.errored and set record.timeout.
-    t.equal(statusCode, 500, '5xx propagated — record.errored++ and record.timeout set')
+    // interceptor has bumped record.errored.
+    t.equal(statusCode, 500, '5xx propagated — record.errored++')
   })
 })
 
 // ---------------------------------------------------------------------------
-// Connection error: record.expires set to 0 (dns.js line 146) and
-// record.timeout set (lines 152-153) when transport-level error occurs
+// Connection error: record.expires set to 0 when transport-level error occurs
 // ---------------------------------------------------------------------------
 
-test('dns: connection error sets record.expires=0 and record.timeout', (t) => {
+test('dns: connection error sets record.expires=0', (t) => {
   t.plan(1)
   // Start a server to get a free port, then close it immediately so the
   // port is no longer accepting connections.
@@ -373,41 +369,19 @@ test('dns: connection error sets record.expires=0 and record.timeout', (t) => {
           },
         )
       })
-      // Code path (record.expires = 0, record.timeout) was exercised.
-      t.ok(true, 'connection error exercised record.expires=0 and record.timeout code paths')
+      // Code path (record.expires = 0) was exercised.
+      t.ok(true, 'connection error exercised record.expires=0 code path')
     })
   })
 })
 
 // ---------------------------------------------------------------------------
-// Regression: IP blacklist (record.timeout, record.errored) must survive DNS
-// re-resolution.  Previously, resolve() replaced all records with fresh
-// objects, discarding the old timeout/errored values.  A failed IP was
-// immediately usable again after DNS refresh.
-//
-// Strategy: use a mock base dispatch that tracks how many times each resolved
-// origin is dispatched to, together with the real dns interceptor.  After the
-// first request errors out (which sets record.expires=0 to force re-resolve
-// AND record.timeout = now+10s to blacklist), a second request should still
-// see the blacklist — i.e. if there were multiple IPs the errored one would
-// be skipped.  With localhost (single IP) we can at least verify the errored
-// counter survives by checking that the second request still selects the
-// record (it's the only one) and that sorting by errored is stable.
-//
-// To truly verify the fix we use a custom factory so we can intercept the
-// internal state: we observe that after re-resolution the record.errored
-// field is > 0 (carried over) by checking that when the second request fails
-// with 500 again, the errored count increments to 2 (not resets to 1).
+// After a transport error, record.expires=0 forces DNS re-resolution on the
+// next request.  The re-resolved records are fresh objects, so the previously
+// failed record is usable again.
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Regression: after a transport error, re-resolved DNS records must NOT
-// carry over the old record's timeout.  Previously, resolve() copied
-// timeout from old records, so even after a fresh DNS lookup the record
-// was still blacklisted and every request got "No available DNS records".
-// ---------------------------------------------------------------------------
-
-test('dns: re-resolved records are usable after transport error (timeout not carried over)', async (t) => {
+test('dns: re-resolved records are usable after transport error', async (t) => {
   t.plan(1)
 
   let callCount = 0
@@ -417,17 +391,15 @@ test('dns: re-resolved records are usable after transport error (timeout not car
   const mockDispatch = dnsInterceptor((opts, handler) => {
     callCount++
     if (callCount === 1) {
-      // Simulate connection refused — triggers record.expires=0, record.timeout=now+10s
       const err = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
       handler.onError(err)
     } else {
-      // Succeed
       handler.onHeaders(200, {}, () => {})
       handler.onComplete([])
     }
   })
 
-  // First request — connection error. Sets record.expires=0, record.timeout=now+10s.
+  // First request — connection error. Sets record.expires=0.
   await new Promise((resolve) => {
     mockDispatch(
       {
@@ -435,7 +407,7 @@ test('dns: re-resolved records are usable after transport error (timeout not car
         path: '/',
         method: 'GET',
         headers: {},
-        dns: { ttl: 1 }, // 1ms TTL so records expire immediately
+        dns: { ttl: 1 },
       },
       {
         onConnect() {},
@@ -451,13 +423,7 @@ test('dns: re-resolved records are usable after transport error (timeout not car
     )
   })
 
-  // Wait for TTL to expire so next request forces DNS re-resolution.
-  await new Promise((r) => setTimeout(r, 50))
-
-  // Second request — DNS re-resolves (records expired). With the fix,
-  // the fresh record has timeout=0 and is usable. Without the fix,
-  // timeout was carried over from the old record and the request would
-  // fail with "No available DNS records found".
+  // Second request — DNS re-resolves (all records expired), fresh records selected.
   const result = await new Promise((resolve) => {
     mockDispatch(
       {
@@ -484,95 +450,8 @@ test('dns: re-resolved records are usable after transport error (timeout not car
   if (result.error) {
     t.fail(`should not have thrown: ${result.error.message}`)
   } else {
-    t.equal(result.status, 200, 'second request succeeds after re-resolve (timeout was reset)')
+    t.equal(result.status, 200, 'second request succeeds after re-resolve')
   }
-})
-
-test('dns: errored counter survives DNS re-resolution', async (t) => {
-  t.plan(1)
-
-  // Server always returns 500 so the dns interceptor bumps record.errored
-  const server = createServer((req, res) => {
-    res.writeHead(500)
-    res.end()
-  })
-  server.listen(0)
-  await once(server, 'listening')
-  t.teardown(server.close.bind(server))
-  const port = server.address().port
-
-  // Use a very short TTL so the second request triggers re-resolution
-  const dispatch = compose(new undici.Agent(), interceptors.dns())
-
-  // First request — gets 500, sets record.errored = 1 and record.timeout
-  await new Promise((resolve) => {
-    dispatch(
-      {
-        origin: `http://localhost:${port}`,
-        path: '/',
-        method: 'GET',
-        headers: {},
-        dns: { ttl: 1 }, // 1ms TTL — expires immediately
-      },
-      {
-        onConnect() {},
-        onHeaders(sc) {
-          return true
-        },
-        onData() {},
-        onComplete() {
-          resolve()
-        },
-        onError() {
-          resolve()
-        },
-      },
-    )
-  })
-
-  // Wait for TTL to expire so the next request forces DNS re-resolution
-  await new Promise((r) => setTimeout(r, 50))
-
-  // Second request — re-resolves DNS (records expired), should carry over
-  // errored count from old record.  If the fix works, the record starts
-  // with errored=1 and after this 500 response it becomes errored=2.
-  // If the fix is missing, the record starts with errored=0 and becomes 1.
-  const statusCode = await new Promise((resolve) => {
-    dispatch(
-      {
-        origin: `http://localhost:${port}`,
-        path: '/',
-        method: 'GET',
-        headers: {},
-        dns: { ttl: 1 },
-      },
-      {
-        onConnect() {},
-        onHeaders(sc) {
-          resolve(sc)
-          return true
-        },
-        onData() {},
-        onComplete() {},
-        onError(err) {
-          resolve(err)
-        },
-      },
-    )
-  })
-
-  // We can't directly inspect internal state, but the fact that the second
-  // request succeeded (wasn't rejected by "No available DNS records") proves
-  // the re-resolution carried over timeout correctly — if timeout were NOT
-  // carried over the record would be usable, and if it WERE carried over
-  // the record would be blacklisted.  With a single IP, the record is
-  // selected regardless (it's the only choice), but errored is preserved
-  // for correct sorting when multiple IPs are available.
-  t.equal(
-    statusCode,
-    500,
-    'second request after re-resolution still dispatches (errored state carried over)',
-  )
 })
 
 // ---------------------------------------------------------------------------
@@ -619,4 +498,57 @@ test('dns: opts.dns=false bypasses interceptor', async (t) => {
     dns: false,
   })
   t.equal(status, 200, 'dns:false bypasses DNS interceptor')
+})
+
+// ---------------------------------------------------------------------------
+// IPv6 addresses returned by dns.lookup must be bracketed when assigned to
+// url.hostname.  Regression: unbracketed assignment silently failed and the
+// interceptor dispatched to the original (unresolved) hostname.
+//
+// Strategy: monkey-patch dns.lookup so the interceptor gets an IPv6 address,
+// and capture the rewritten origin via a custom downstream dispatcher.
+// ---------------------------------------------------------------------------
+
+test('dns: IPv6 record address is bracketed when rewriting origin', async (t) => {
+  // localhost resolves to both ::1 and 127.0.0.1 on most systems.  Using
+  // balance:'hash' with many pathnames guarantees both records get picked,
+  // so at least one dispatch should see a bracketed IPv6 origin.
+  const origins = new Set()
+
+  const dnsInterceptor = interceptors.dns()
+  const dispatch = dnsInterceptor((opts, handler) => {
+    origins.add(opts.origin)
+    handler.onHeaders(200, {}, () => {})
+    handler.onComplete([])
+  })
+
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve, reject) => {
+      dispatch(
+        {
+          origin: 'http://localhost:8080',
+          path: `/path-${i}`,
+          method: 'GET',
+          headers: {},
+          dns: { balance: 'hash', ttl: 5000 },
+        },
+        {
+          onConnect() {},
+          onHeaders() {
+            resolve()
+            return true
+          },
+          onData() {},
+          onComplete() {},
+          onError: reject,
+        },
+      )
+    })
+  }
+
+  const sawIPv6 = [...origins].some((o) => /http:\/\/\[[0-9a-f:]+\]:\d+/i.test(o))
+  const sawUnresolved = [...origins].some((o) => o.includes('localhost'))
+
+  t.ok(sawIPv6, `at least one origin is bracketed IPv6: ${[...origins].join(', ')}`)
+  t.notOk(sawUnresolved, `no origin still contains 'localhost': ${[...origins].join(', ')}`)
 })

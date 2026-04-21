@@ -453,10 +453,10 @@ test('re-caching same key returns the freshest entry (cachedAt DESC fix)', async
 })
 
 // ---------------------------------------------------------------------------
-// purgeStale
+// gc
 // ---------------------------------------------------------------------------
 
-test('purgeStale always deletes expired entries regardless of call frequency', async (t) => {
+test('gc always deletes expired entries regardless of call frequency', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
 
@@ -466,8 +466,8 @@ test('purgeStale always deletes expired entries regardless of call frequency', a
   store.set(key, makeValue({ deleteAt: past, cachedAt: past - 2 }))
   await flush()
 
-  store.purgeStale()
-  store.purgeStale()
+  store.gc()
+  store.gc()
 
   const now = Date.now()
   store.set(
@@ -1366,10 +1366,53 @@ test('etag empty string is stored and retrieved as empty string, not undefined',
   t.end()
 })
 
-test('purgeStale on closed store does not throw', (t) => {
+test('gc on closed store does not throw', (t) => {
   const store = new SqliteCacheStore()
   store.close()
 
-  t.doesNotThrow(() => store.purgeStale(), 'purgeStale must not throw after close')
+  t.doesNotThrow(() => store.gc(), 'gc must not throw after close')
+  t.end()
+})
+
+// ---------------------------------------------------------------------------
+// clear
+// ---------------------------------------------------------------------------
+
+test('clear removes all entries from the store', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  store.set(makeKey({ path: '/a' }), makeValue())
+  store.set(makeKey({ path: '/b' }), makeValue())
+  await flush()
+
+  t.ok(store.get(makeKey({ path: '/a' })))
+  t.ok(store.get(makeKey({ path: '/b' })))
+
+  store.clear()
+
+  t.notOk(store.get(makeKey({ path: '/a' })))
+  t.notOk(store.get(makeKey({ path: '/b' })))
+  t.end()
+})
+
+test('clear drops pending inserts in the batch', (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  store.set(makeKey({ path: '/pending' }), makeValue())
+  t.ok(store.get(makeKey({ path: '/pending' })), 'visible in batch before clear')
+
+  store.clear()
+
+  t.notOk(store.get(makeKey({ path: '/pending' })), 'batch entry gone after clear')
+  t.end()
+})
+
+test('clear on closed store does not throw', (t) => {
+  const store = new SqliteCacheStore()
+  store.close()
+
+  t.doesNotThrow(() => store.clear(), 'clear must not throw after close')
   t.end()
 })

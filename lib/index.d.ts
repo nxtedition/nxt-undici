@@ -176,7 +176,8 @@ export interface CacheStore {
     key: CacheKey,
     value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
   ): void
-  purgeStale(): void
+  gc(): void
+  clear(): void
   close(): void
 }
 
@@ -242,7 +243,8 @@ export class SqliteCacheStore implements CacheStore {
     key: CacheKey,
     value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
   ): void
-  purgeStale(): void
+  gc(): void
+  clear(): void
   close(): void
 }
 

@@ -301,6 +301,26 @@ t.test('should not follow redirects when using Readable request bodies', async (
   }
 })
 
+t.test('should follow HTTP 303 when using Readable request bodies', async (t) => {
+  const server = await startRedirectingServer(t)
+
+  const {
+    statusCode,
+    headers,
+    body: bodyStream,
+  } = await request(`http://${server}/303`, {
+    method: 'POST',
+    body: createReadable('REQUEST'),
+    follow: 10,
+  })
+
+  const body = await bodyStream.text()
+
+  t.equal(statusCode, 200)
+  t.notOk(headers.location)
+  t.equal(body, `GET /5 :: host@${server} connection@keep-alive`)
+})
+
 t.test('should follow redirections when going cross origin', async (t) => {
   const [server1] = await startRedirectingChainServers(t)
 

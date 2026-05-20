@@ -41,6 +41,97 @@ test('less simple request', (t) => {
 })
 
 // ---------------------------------------------------------------------------
+// request(opts) single-arg form picks up opts.dispatcher (index.js 182-191)
+// Regression: previously the dispatcher lookup read from the 2nd argument
+// only, so request({ url, dispatcher }) silently fell back to the global
+// dispatcher.
+// ---------------------------------------------------------------------------
+
+test('request: single-arg form uses opts.dispatcher', (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const port = server.address().port
+    const inner = undici.getGlobalDispatcher()
+    let dispatched = false
+    const dispatcher = {
+      dispatch(opts, handler) {
+        dispatched = true
+        return inner.dispatch(opts, handler)
+      },
+    }
+    const { body } = await request({
+      url: `http://0.0.0.0:${port}`,
+      dispatcher,
+    })
+    let str = ''
+    for await (const chunk of body) {
+      str += chunk
+    }
+    t.equal(str, 'ok')
+    t.ok(dispatched, 'custom dispatcher from single-arg opts was used')
+  })
+})
+
+test('request: single-arg form uses opts.dispatch alias', (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const port = server.address().port
+    const inner = undici.getGlobalDispatcher()
+    let dispatched = false
+    const dispatcher = {
+      dispatch(opts, handler) {
+        dispatched = true
+        return inner.dispatch(opts, handler)
+      },
+    }
+    const { body } = await request({
+      url: `http://0.0.0.0:${port}`,
+      dispatch: dispatcher,
+    })
+    let str = ''
+    for await (const chunk of body) {
+      str += chunk
+    }
+    t.equal(str, 'ok')
+    t.ok(dispatched, 'opts.dispatch alias honored in single-arg form')
+  })
+})
+
+test('request: two-arg form still honors opts.dispatcher (no regression)', (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const port = server.address().port
+    const inner = undici.getGlobalDispatcher()
+    let dispatched = false
+    const dispatcher = {
+      dispatch(opts, handler) {
+        dispatched = true
+        return inner.dispatch(opts, handler)
+      },
+    }
+    const { body } = await request(`http://0.0.0.0:${port}`, { dispatcher })
+    let str = ''
+    for await (const chunk of body) {
+      str += chunk
+    }
+    t.equal(str, 'ok')
+    t.ok(dispatched, 'custom dispatcher from two-arg opts still used')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // opts.userAgent sets the user-agent request header (index.js line 126-128)
 // ---------------------------------------------------------------------------
 

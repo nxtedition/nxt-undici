@@ -1,5 +1,7 @@
 /* eslint-disable */
 import t from 'tap'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import {
   startRedirectingServer,
   startRedirectingWithBodyServer,
@@ -11,6 +13,31 @@ import {
 } from './utils/redirecting-servers.js'
 import { createReadable } from './utils/stream.js'
 import { request } from '../lib/index.js'
+
+t.test('request(url) follows redirect from / to /docs (whisper-style)', async (t) => {
+  const server = createServer((req, res) => {
+    if (req.url === '/') {
+      res.writeHead(307, { Location: '/docs' })
+      res.end()
+    } else if (req.url === '/docs') {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('OK')
+    } else {
+      res.writeHead(404)
+      res.end()
+    }
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.teardown(() => server.close())
+
+  const { port } = server.address()
+  const { statusCode, headers, body } = await request(`http://127.0.0.1:${port}/`)
+
+  t.equal(statusCode, 200)
+  t.notOk(headers.location)
+  t.equal(await body.text(), 'OK')
+})
 
 t.test('should follow redirection after a HTTP 300', async (t) => {
   const server = await startRedirectingServer(t)

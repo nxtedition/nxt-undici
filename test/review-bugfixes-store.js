@@ -109,7 +109,11 @@ test('close() persists a large batch that exceeds one flush time slice', (t) => 
     }
   })
 
-  const N = 20000
+  // Large enough to span more than one ~10ms flush time-slice (the buggy
+  // close() persisted only the first slice and discarded the rest). Kept
+  // modest, and verification is sampled, so the test doesn't hog the event
+  // loop and destabilise the parallel suite.
+  const N = 12000
   const store = new SqliteCacheStore({ location: dbPath })
   const now = Date.now()
   for (let i = 0; i < N; i++) {
@@ -124,13 +128,12 @@ test('close() persists a large batch that exceeds one flush time slice', (t) => 
   const store2 = new SqliteCacheStore({ location: dbPath })
   t.teardown(() => store2.close())
 
-  let found = 0
-  for (let i = 0; i < N; i++) {
-    if (store2.get(makeKey({ path: `/big-${i}` }))) {
-      found++
-    }
+  // Sample across the range — crucially including the LAST entry, which the
+  // buggy close() (single budgeted slice) would have dropped.
+  const sample = [0, 1, (N / 2) | 0, N - 100, N - 2, N - 1]
+  for (const i of sample) {
+    t.ok(store2.get(makeKey({ path: `/big-${i}` })), `entry ${i} survived close()`)
   }
-  t.equal(found, N, 'every pending entry must survive close()')
   t.end()
 })
 

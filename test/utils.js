@@ -409,14 +409,41 @@ test('parseHeaders - object format duplicate key merges into array (line 341-342
   t.end()
 })
 
-test('parseHeaders - content-disposition converted to latin1 when content-length present', (t) => {
-  // Both headers present → latin1 conversion applied (utils.js lines 355-356)
+test('parseHeaders - content-disposition value is preserved verbatim (ascii)', (t) => {
   const result = parseHeaders({
     'content-length': '42',
     'content-disposition': 'attachment; filename="file.txt"',
   })
-  t.ok(result['content-disposition'], 'content-disposition is present after latin1 conversion')
+  t.equal(result['content-disposition'], 'attachment; filename="file.txt"')
   t.ok(result['content-length'], 'content-length still present')
+  t.end()
+})
+
+test('parseHeaders - content-disposition with non-ASCII filename is not corrupted', (t) => {
+  // Regression: a latin1 re-encode used to double-mojibake non-ASCII values
+  // whenever content-length was also present.
+  const result = parseHeaders([
+    Buffer.from('content-length'),
+    Buffer.from('42'),
+    Buffer.from('content-disposition'),
+    Buffer.from('attachment; filename="naïve.txt"', 'utf8'),
+  ])
+  t.equal(result['content-disposition'], 'attachment; filename="naïve.txt"')
+  t.end()
+})
+
+test('parseHeaders - duplicate content-disposition is not destroyed by re-encode', (t) => {
+  // Regression: Buffer.from(array) coerced array elements to NUL bytes,
+  // replacing the value with control characters.
+  const result = parseHeaders([
+    Buffer.from('content-length'),
+    Buffer.from('42'),
+    Buffer.from('content-disposition'),
+    Buffer.from('attachment; filename=a.txt'),
+    Buffer.from('content-disposition'),
+    Buffer.from('inline'),
+  ])
+  t.strictSame(result['content-disposition'], ['attachment; filename=a.txt', 'inline'])
   t.end()
 })
 

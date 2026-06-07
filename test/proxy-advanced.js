@@ -602,6 +602,82 @@ test('proxy: onUpgrade processes response headers via reduceHeaders and forwards
 })
 
 // ---------------------------------------------------------------------------
+// Regression guard for the regex-free hop-by-hop check (isHopByHop/eqiLower in
+// proxy.js). It must stay byte-equivalent to the HOP_EXPR regex. This drives a
+// request through the real interceptor with EVERY hop-by-hop header in mixed
+// case plus length-collision near-misses; if the fast check ever drifts from
+// HOP_EXPR a hop header leaks (or a normal header is wrongly stripped) and this
+// fails. Uses a mock dispatch (no network) so it stays light and deterministic.
+// ---------------------------------------------------------------------------
+
+test('proxy: all hop-by-hop headers stripped (any case); near-misses preserved', async (t) => {
+  const HOP = [
+    'te',
+    'host',
+    'upgrade',
+    'trailers',
+    'connection',
+    'keep-alive',
+    'http2-settings',
+    'transfer-encoding',
+    'proxy-connection',
+    'proxy-authenticate',
+    'proxy-authorization',
+  ]
+  // Alternate the case of each letter so we exercise the case-insensitive path.
+  const mixCase = (s) =>
+    [...s].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c.toLowerCase())).join('')
+
+  const headers = {}
+  for (const h of HOP) headers[mixCase(h)] = 'should-be-stripped'
+  // Near-misses that share a length bucket with a hop name but must be KEPT.
+  const KEEP = {
+    'x-te': 'k', // not 'te'
+    date: 'k', // len 4, not 'host'
+    upgraded: 'k', // len 8, same bucket as 'trailers'
+    connectionx: 'k', // len 11, falls through the switch
+    'keep-alivez': 'k', // len 11
+    'http2-setting': 'k', // len 13, off by one from 'http2-settings'
+    pragma: 'k', // len 6, no bucket
+  }
+  Object.assign(headers, KEEP)
+
+  let captured
+  const mockDispatch = (opts, handler) => {
+    captured = opts.headers
+    handler.onConnect(() => {})
+    handler.onHeaders(200, {}, () => true)
+    handler.onComplete()
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.proxy())
+
+  await new Promise((resolve, reject) => {
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', headers, proxy: {} },
+      {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError: reject,
+      },
+    )
+  })
+
+  for (const key of Object.keys(captured)) {
+    t.notOk(HOP.includes(key.toLowerCase()), `hop header "${key}" stripped`)
+  }
+  for (const [key, val] of Object.entries(KEEP)) {
+    t.equal(captured[key], val, `near-miss header "${key}" preserved`)
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Regression: content-length on GET requests was NOT stripped by the proxy
 // interceptor due to a missing `else if`. The first `if` matched (empty body)
 // but fell through to the next `if` which re-added the header.
@@ -642,4 +718,140 @@ test('proxy: content-length is preserved on POST requests (payload methods)', as
     body: 'hello',
     proxy: {},
   })
+})
+
+// ---------------------------------------------------------------------------
+// Repeated header field-lines arrive as arrays (parseHeaders collects them).
+// Per RFC 9110 §5.3 only list-valued fields may repeat: Via (§7.6.3),
+// Forwarded (RFC 7239 §4) and Connection (§7.6.1) combine; the singular Host
+// (§7.2) and :authority (RFC 9113 §8.3.1) are rejected. These use a mock
+// dispatch (no network) so arrays can be injected deterministically.
+// ---------------------------------------------------------------------------
+
+// Capture the request headers the proxy forwards to the upstream.
+function proxyRequestHeaders(opts) {
+  return new Promise((resolve, reject) => {
+    let captured
+    const mockDispatch = (o, handler) => {
+      captured = o.headers
+      handler.onConnect(() => {})
+      handler.onHeaders(200, {}, () => true)
+      handler.onComplete()
+      return true
+    }
+    const dispatch = compose(mockDispatch, interceptors.proxy())
+    try {
+      dispatch(opts, {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve(captured)
+        },
+        onError: reject,
+      })
+    } catch (err) {
+      // request-path reduceHeaders throws synchronously
+      reject(err)
+    }
+  })
+}
+
+// Capture the response headers the proxy passes downstream.
+function proxyResponseHeaders(responseHeaders, opts) {
+  return new Promise((resolve, reject) => {
+    const mockDispatch = (o, handler) => {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, responseHeaders, () => true)
+      handler.onComplete()
+      return true
+    }
+    const dispatch = compose(mockDispatch, interceptors.proxy())
+    let received
+    try {
+      dispatch(opts, {
+        onConnect() {},
+        onHeaders(sc, h) {
+          received = h
+          return true
+        },
+        onData() {},
+        onComplete() {
+          resolve(received)
+        },
+        onError: reject,
+      })
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
+const isBadGateway = (err) =>
+  err && (err.status === 502 || err.statusCode === 502 || /Bad Gateway/.test(err.message))
+
+test('proxy: repeated Connection field-lines (array) strip every listed header', async (t) => {
+  t.plan(4)
+  const received = await proxyResponseHeaders(
+    {
+      // two Connection lines; the second itself lists multiple options
+      connection: ['x-secret', 'x-trace, keep-alive'],
+      'x-secret': 'leak',
+      'x-trace': 'leak2',
+      'x-keep': 'kept',
+    },
+    { method: 'GET', path: '/', origin: 'http://x', headers: {}, proxy: {} },
+  )
+  t.notOk(received['x-secret'], 'header from first Connection line stripped')
+  t.notOk(received['x-trace'], 'header from second (multi-token) Connection line stripped')
+  t.notOk(received['connection'], 'Connection itself stripped')
+  t.equal(received['x-keep'], 'kept', 'unrelated header preserved')
+})
+
+test('proxy: repeated Via field-lines (array) combine and append proxy without throwing', async (t) => {
+  t.plan(2)
+  const received = await proxyResponseHeaders(
+    { via: ['HTTP/1.1 alpha', 'HTTP/1.1 beta'], 'x-keep': 'k' },
+    { method: 'GET', path: '/', origin: 'http://x', headers: {}, proxy: { name: 'myproxy' } },
+  )
+  t.match(
+    received.via,
+    /alpha.*beta.*myproxy/,
+    'both upstream Via segments combined, proxy appended',
+  )
+  t.equal(received['x-keep'], 'k', 'unrelated header preserved')
+})
+
+test('proxy: duplicate Host (array) is rejected as BadGateway', async (t) => {
+  t.plan(1)
+  try {
+    await proxyRequestHeaders({
+      method: 'GET',
+      path: '/',
+      origin: 'http://x',
+      headers: { host: ['a.example.com', 'b.example.com'], 'x-keep': 'k' },
+      proxy: {},
+    })
+    t.fail('should have thrown for duplicate Host')
+  } catch (err) {
+    t.ok(isBadGateway(err), 'duplicate Host throws BadGateway')
+  }
+})
+
+test('proxy: duplicate :authority (array) is rejected as BadGateway', async (t) => {
+  t.plan(1)
+  try {
+    await proxyRequestHeaders({
+      method: 'GET',
+      path: '/',
+      origin: 'http://x',
+      headers: { ':authority': ['a.example.com', 'b.example.com'] },
+      proxy: {},
+    })
+    t.fail('should have thrown for duplicate :authority')
+  } catch (err) {
+    t.ok(isBadGateway(err), 'duplicate :authority throws BadGateway')
+  }
 })

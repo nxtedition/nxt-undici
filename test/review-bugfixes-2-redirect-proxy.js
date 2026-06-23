@@ -197,6 +197,79 @@ test('proxy: Connection-listed mixed-case header is stripped (request path)', (t
 // proxy: an empty inbound via/forwarded must not leak downstream.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// proxy: special-header handling is case-insensitive in the standalone
+// composition — a mixed-case Connection key still strips its listed per-hop
+// header, and a mixed-case inbound Forwarded is still rejected.
+// ---------------------------------------------------------------------------
+
+test('proxy: mixed-case Connection key strips its listed per-hop header', (t) => {
+  t.plan(2)
+  let forwarded
+  const base = (opts, h) => {
+    forwarded = opts.headers
+    h.onConnect(() => {})
+    h.onHeaders(200, {}, () => {})
+    h.onComplete(null)
+  }
+  const dispatch = compose(base, interceptors.proxy())
+  dispatch(
+    {
+      origin: 'http://up',
+      path: '/',
+      method: 'GET',
+      headers: { Connection: 'X-Per-Hop', 'X-Per-Hop': 'leak', 'x-keep': 'yes' },
+      proxy: { name: 'p' },
+    },
+    {
+      onConnect() {},
+      onHeaders() {
+        return true
+      },
+      onData() {},
+      onComplete() {
+        t.notOk('X-Per-Hop' in forwarded, 'per-hop header stripped via a mixed-case Connection key')
+        t.equal(forwarded['x-keep'], 'yes', 'unrelated header retained')
+      },
+      onError() {},
+    },
+  )
+})
+
+test('proxy: mixed-case inbound Forwarded (no socket) is rejected as BadGateway', (t) => {
+  t.plan(1)
+  const base = (opts, h) => {
+    h.onConnect(() => {})
+    h.onHeaders(200, {}, () => {})
+    h.onComplete(null)
+  }
+  const dispatch = compose(base, interceptors.proxy())
+  let errored
+  try {
+    dispatch(
+      {
+        origin: 'http://up',
+        path: '/',
+        method: 'GET',
+        headers: { Forwarded: 'for=1.2.3.4' }, // mixed-case key, no socket
+        proxy: { name: 'p' },
+      },
+      {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {},
+        onError() {},
+      },
+    )
+  } catch (err) {
+    errored = err
+  }
+  t.match(errored?.message, /Bad Gateway/, 'mixed-case inbound Forwarded is captured and rejected')
+})
+
 test('proxy: empty via/forwarded are not emitted downstream', (t) => {
   t.plan(2)
   let forwarded

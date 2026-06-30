@@ -259,6 +259,27 @@ test('pressure: a synchronous dispatch throw settles the pending gauge', async (
 })
 
 // ---------------------------------------------------------------------------
+// an invalid handler throws without wedging the origin under pressure
+// ---------------------------------------------------------------------------
+
+test('pressure: an invalid handler throws without leaking the pending gauge', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // DecoratorHandler rejects a non-object handler — the throw must propagate and
+  // leave no phantom pending count (which would peg the origin under `some`).
+  t.throws(() => wrapped({ origin: ORIGIN, path: '/' }, null), 'invalid handler rejected')
+
+  const s = p.stats(ORIGIN)
+  t.ok(s == null || s.pending === 0, 'pending gauge not leaked')
+  await tick(p)
+  t.equal(p.stats(ORIGIN), undefined, 'empty record evicted on the next idle tick')
+
+  p.close()
+})
+
+// ---------------------------------------------------------------------------
 // integration: composed in front of a real dispatcher
 // ---------------------------------------------------------------------------
 

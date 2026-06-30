@@ -186,43 +186,44 @@ test('redirect: a 1xx informational response passes through to the final 200', a
 })
 
 // ---------------------------------------------------------------------------
-// response-verify: bodyless responses (304 Not Modified, 204 No Content) may
-// carry a Content-Length describing the full representation. Verifying the
-// (absent) body against it pre-fix produced a false "body size mismatch" error,
-// breaking conditional-request revalidation.
+// response-verify: bodyless responses (304 Not Modified, 204 No Content, 205
+// Reset Content) may carry a Content-Length describing the full representation.
+// Verifying the (absent) body against it pre-fix produced a false "body size
+// mismatch" error, breaking conditional-request revalidation.
 // ---------------------------------------------------------------------------
 
-test('verify: 304/204 carrying Content-Length is not flagged as a size mismatch', (t) => {
-  t.plan(2)
-  import('../lib/interceptor/response-verify.js').then(({ default: responseVerify }) => {
-    for (const status of [304, 204]) {
-      let errored = false
-      let completed = false
-      const handler = {
-        onConnect() {},
-        onHeaders() {
-          return true
-        },
-        onData() {},
-        onComplete() {
-          completed = true
-        },
-        onError() {
-          errored = true
-        },
-      }
-      const fakeDispatch = (opts, h) => {
-        h.onConnect(() => {})
-        h.onHeaders(status, { 'content-length': '100' }, () => {})
-        h.onComplete({})
-      }
-      responseVerify()(fakeDispatch)({ verify: { size: true }, method: 'GET' }, handler)
-      t.ok(
-        completed && !errored,
-        `${status} with content-length completes without a size-mismatch error`,
-      )
+test('verify: bodyless statuses carrying Content-Length are not flagged as a size mismatch', async (t) => {
+  t.plan(3)
+  // await the import so a rejection is attributed to this test rather than
+  // surfacing as a planned-assertion shortfall / timeout.
+  const { default: responseVerify } = await import('../lib/interceptor/response-verify.js')
+  for (const status of [304, 204, 205]) {
+    let errored = false
+    let completed = false
+    const handler = {
+      onConnect() {},
+      onHeaders() {
+        return true
+      },
+      onData() {},
+      onComplete() {
+        completed = true
+      },
+      onError() {
+        errored = true
+      },
     }
-  })
+    const fakeDispatch = (opts, h) => {
+      h.onConnect(() => {})
+      h.onHeaders(status, { 'content-length': '100' }, () => {})
+      h.onComplete({})
+    }
+    responseVerify()(fakeDispatch)({ verify: { size: true }, method: 'GET' }, handler)
+    t.ok(
+      completed && !errored,
+      `${status} with content-length completes without a size-mismatch error`,
+    )
+  }
 })
 
 // ---------------------------------------------------------------------------

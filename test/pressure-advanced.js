@@ -34,6 +34,13 @@ async function tick(interceptor) {
   interceptor.sample()
 }
 
+// Drive a captured handler through a full successful lifecycle with a status.
+function complete(handler, statusCode) {
+  handler.onConnect(() => {})
+  handler.onHeaders(statusCode, {}, () => {})
+  handler.onComplete()
+}
+
 // ---------------------------------------------------------------------------
 // accounting: pending -> running -> completed reconstructed from the lifecycle
 // ---------------------------------------------------------------------------
@@ -48,10 +55,13 @@ test('pressure: reconstructs pending/running/completed gauges from the lifecycle
     pending: 1,
     running: 0,
     completed: 0,
+    errored: 0,
     some: 0,
     full: 0,
+    errorRate: 0,
     shed: false,
     paused: false,
+    degraded: false,
   })
 
   captured[0].onConnect(() => {})
@@ -217,7 +227,14 @@ test('pressure: a fully idle, decayed origin is evicted', async (t) => {
 
 test('pressure: untracked origin reports no pressure', async (t) => {
   const p = makeInterceptor()
-  t.same(p.pressure('http://never.test'), { some: 0, full: 0, shed: false, paused: false })
+  t.same(p.pressure('http://never.test'), {
+    some: 0,
+    full: 0,
+    errorRate: 0,
+    shed: false,
+    paused: false,
+    degraded: false,
+  })
   t.equal(p.stats('http://never.test'), undefined)
   t.notOk(p.shouldBackoff('http://never.test', 'low'))
   p.close()
@@ -275,6 +292,130 @@ test('pressure: an invalid handler throws without leaking the pending gauge', as
   t.ok(s == null || s.pending === 0, 'pending gauge not leaked')
   await tick(p)
   t.equal(p.stats(ORIGIN), undefined, 'empty record evicted on the next idle tick')
+
+  p.close()
+})
+
+// ---------------------------------------------------------------------------
+// error pressure: a fast-but-failing origin (5xx/429) engages `degraded`
+// ---------------------------------------------------------------------------
+
+test('pressure: a burst of overload errors (5xx) engages degraded without backlog or pause', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // Three requests that connect and complete *quickly* — no backlog, full
+  // progress — but every one is a 503. Pure latency/backlog pressure stays 0.
+  for (let i = 0; i < 3; i++) wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  for (const h of captured) complete(h, 503)
+
+  await tick(p)
+  const r = p.pressure(ORIGIN)
+  t.equal(r.some, 0, 'no connection backlog')
+  t.equal(r.full, 0, 'work completed — not stalled')
+  t.ok(r.errorRate > 0.5, 'error-rate EWMA is high')
+  t.ok(r.degraded, 'degraded latched')
+  t.notOk(r.paused, 'not paused — the origin is responding, just failing')
+
+  // degraded sheds discretionary work, like `some`.
+  t.ok(p.shouldBackoff(ORIGIN, 'low'), 'low priority is shed')
+  t.notOk(p.shouldBackoff(ORIGIN, 'normal'), 'normal priority is not shed')
+  t.notOk(p.shouldBackoff(ORIGIN), 'undirected work is not shed by errors alone')
+
+  p.close()
+})
+
+test('pressure: 429 counts as an overload error; 4xx client errors do not', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler) // 429 -> error
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler) // 404 -> not an error
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler) // 200 -> not an error
+  complete(captured[0], 429)
+  complete(captured[1], 404)
+  complete(captured[2], 200)
+
+  const s = p.stats(ORIGIN)
+  t.equal(s?.completed, 3, 'all three completed')
+  t.equal(s?.errored, 1, 'only the 429 is counted as an overload error')
+
+  p.close()
+})
+
+test('pressure: a transport error counts; a client abort does not', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // Transport failure (no status) -> counted.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  captured[0].onConnect(() => {})
+  captured[0].onError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+
+  // Client-initiated abort -> not the origin's fault, not counted.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  captured[1].onConnect(() => {})
+  captured[1].onError(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+
+  const s = p.stats(ORIGIN)
+  t.equal(s?.completed, 2, 'both settled')
+  t.equal(s?.errored, 1, 'transport error counted, abort not')
+
+  p.close()
+})
+
+test('pressure: degraded releases once responses recover', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // Engage on a 503 burst.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  complete(captured[0], 503)
+  complete(captured[1], 503)
+  await tick(p)
+  t.ok(p.pressure(ORIGIN).degraded, 'degraded engaged on 5xx burst')
+
+  // Keep one request in-flight so the record is retained, then complete two
+  // healthy 200s — the error fraction this window is 0.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  captured[2].onConnect(() => {})
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  complete(captured[3], 200)
+  complete(captured[4], 200)
+  await tick(p)
+
+  t.notOk(p.pressure(ORIGIN).degraded, 'degraded released after healthy responses')
+  t.match(p.stats(ORIGIN), { running: 1 }, 'record retained while in-flight')
+
+  p.close()
+})
+
+test('pressure: a reconnect clears stale status so a later transport failure still counts', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // One handler reconnected across attempts, as an upstream retry handler does.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  const h = captured[0]
+  h.onConnect(() => {})
+  h.onHeaders(200, {}, () => {}) // attempt 1 captured a (non-error) success status
+  h.onConnect(() => {}) // retry -> fresh attempt; captured status must reset
+  h.onError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+
+  // Without the per-connect reset, the stale 200 would mask the transport
+  // failure (200 -> not an error) and errored would be 0.
+  t.match(
+    p.stats(ORIGIN),
+    { completed: 1, errored: 1 },
+    'transport failure counted, not masked by the prior attempt status',
+  )
 
   p.close()
 })

@@ -150,6 +150,9 @@ export interface PressureInterceptorOptions {
   /** Schmitt-trigger dead-band for `full` (pause the producer). */
   fullHi?: number
   fullLo?: number
+  /** Schmitt-trigger dead-band for `errorRate` (mark the origin degraded). */
+  errHi?: number
+  errLo?: number
 }
 
 export interface PressureStats {
@@ -159,21 +162,29 @@ export interface PressureStats {
   running: number
   /** Counter: cumulative settled requests (onComplete + onError). */
   completed: number
+  /** Counter: cumulative settled requests that were overload errors (429/420/5xx, transport failures). */
+  errored: number
   /** EWMA in [0,1]: fraction of recent time the origin had a connection backlog. */
   some: number
   /** EWMA in [0,1]: fraction of recent time the origin made zero progress under backlog. */
   full: number
+  /** EWMA in [0,1]: smoothed fraction of completions that were overload errors. */
+  errorRate: number
   /** Latched: shed discretionary work (engaged when `some` crosses `someHi`). */
   shed: boolean
   /** Latched: pause the producer (engaged when `full` crosses `fullHi`). */
   paused: boolean
+  /** Latched: error rate too high (engaged when `errorRate` crosses `errHi`). */
+  degraded: boolean
 }
 
 export interface PressureReading {
   some: number
   full: number
+  errorRate: number
   shed: boolean
   paused: boolean
+  degraded: boolean
 }
 
 export interface PressureInterceptor {

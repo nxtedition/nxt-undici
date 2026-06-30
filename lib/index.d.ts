@@ -137,6 +137,61 @@ export interface LogInterceptorOptions {
   bindings?: Record<string, unknown>
 }
 
+export interface PressureInterceptorOptions {
+  /** Sampling interval for the internal EWMA loop, in ms (default 200).
+   *  Set to 0 to disable the internal timer and drive sampling yourself via
+   *  `sample()` from a loop you already run. */
+  sampleInterval?: number
+  /** EWMA time-constant in ms — the smoothing/desensitizing window (default 10000). */
+  tau?: number
+  /** Schmitt-trigger dead-band for `some` (shed discretionary work). */
+  someHi?: number
+  someLo?: number
+  /** Schmitt-trigger dead-band for `full` (pause the producer). */
+  fullHi?: number
+  fullLo?: number
+}
+
+export interface PressureStats {
+  /** Gauge: requests dispatched but not yet connected (waiting for a slot). */
+  pending: number
+  /** Gauge: requests connected and in-flight. */
+  running: number
+  /** Counter: cumulative settled requests (onComplete + onError). */
+  completed: number
+  /** EWMA in [0,1]: fraction of recent time the origin had a connection backlog. */
+  some: number
+  /** EWMA in [0,1]: fraction of recent time the origin made zero progress under backlog. */
+  full: number
+  /** Latched: shed discretionary work (engaged when `some` crosses `someHi`). */
+  shed: boolean
+  /** Latched: pause the producer (engaged when `full` crosses `fullHi`). */
+  paused: boolean
+}
+
+export interface PressureReading {
+  some: number
+  full: number
+  shed: boolean
+  paused: boolean
+}
+
+export interface PressureInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  /** Per-origin snapshot, or — with no argument — an array over every tracked origin. */
+  stats(origin: string): PressureStats | undefined
+  stats(): Array<PressureStats & { origin: string }>
+  /** Smoothed pressure for an origin (zeroed/false for an untracked origin). */
+  pressure(origin: string): PressureReading
+  /** `full` pauses everything; `some` sheds only discretionary (low-priority) work. */
+  shouldBackoff(origin: string, priority?: Priority): boolean
+  /** Manually tick the EWMA loop (for `sampleInterval: 0`). */
+  sample(): void
+  /** Stop the internal timer and drop all tracked origins. */
+  close(): void
+  [Symbol.dispose](): void
+}
+
 export interface CacheKey {
   origin: string
   method: string
@@ -230,6 +285,7 @@ export const interceptors: {
   dns: () => Interceptor
   lookup: () => Interceptor
   priority: () => Interceptor
+  pressure: (opts?: PressureInterceptorOptions) => PressureInterceptor
 }
 
 export const cache: {

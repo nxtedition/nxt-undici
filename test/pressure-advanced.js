@@ -396,6 +396,30 @@ test('pressure: degraded releases once responses recover', async (t) => {
   p.close()
 })
 
+test('pressure: a reconnect clears stale status so a later transport failure still counts', async (t) => {
+  const p = makeInterceptor()
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  // One handler reconnected across attempts, as an upstream retry handler does.
+  wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
+  const h = captured[0]
+  h.onConnect(() => {})
+  h.onHeaders(200, {}, () => {}) // attempt 1 captured a (non-error) success status
+  h.onConnect(() => {}) // retry -> fresh attempt; captured status must reset
+  h.onError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+
+  // Without the per-connect reset, the stale 200 would mask the transport
+  // failure (200 -> not an error) and errored would be 0.
+  t.match(
+    p.stats(ORIGIN),
+    { completed: 1, errored: 1 },
+    'transport failure counted, not masked by the prior attempt status',
+  )
+
+  p.close()
+})
+
 // ---------------------------------------------------------------------------
 // integration: composed in front of a real dispatcher
 // ---------------------------------------------------------------------------

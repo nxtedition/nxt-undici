@@ -7,9 +7,10 @@ import { compose, interceptors, request } from '../lib/index.js'
 // Regression tests for range-resume edge cases in
 // lib/interceptor/response-retry.js:
 //
-// 1. A 200 with content-length: 0 that errors between headers and complete
-//    must deliver the ORIGINAL error — not an AssertionError from the resume
-//    branch (`bytes=0--1` is not a resumable range).
+// 1. A 200 with a non-positive content-length (0, or an invalid negative
+//    value like -5) that errors between headers and complete must deliver the
+//    ORIGINAL error — not an AssertionError from the resume branch (neither
+//    yields a resumable range).
 // 2. Flat [name, value, ...] array request headers (legal for direct
 //    dispatch()/compose() users) must be normalized before the resume
 //    re-dispatch — not spread into garbage '0'/'1' header names.
@@ -29,12 +30,14 @@ import { compose, interceptors, request } from '../lib/index.js'
 //    re-set.
 
 // ---------------------------------------------------------------------------
-// Bug 1: zero-length body + error between headers and complete.
+// Bug 1: non-positive content-length + error between headers and complete.
 //
 // Driven with a mock dispatch: a real HTTP server cannot produce this window,
 // because with content-length: 0 the client parser completes the message as
 // soon as the headers arrive — so the socket teardown is only observable
-// between onHeaders and onComplete at the handler level.
+// between onHeaders and onComplete at the handler level. The negative variant
+// is mock-only too: a real server/parser never emits a negative
+// content-length.
 // ---------------------------------------------------------------------------
 
 test('retry: zero-length body error after headers delivers original error, not AssertionError', async (t) => {
@@ -73,6 +76,47 @@ test('retry: zero-length body error after headers delivers original error, not A
   t.not(err.name, 'AssertionError', 'must not surface an internal AssertionError')
   t.equal(err, originalErr, 'the original network error is delivered')
   t.equal(dispatches, 1, 'no resume attempt is dispatched for a zero-length body')
+})
+
+test('retry: negative content-length error after headers delivers original error, not AssertionError', async (t) => {
+  t.plan(3)
+
+  const originalErr = Object.assign(new Error('kaboom'), { code: 'ECONNRESET' })
+
+  let dispatches = 0
+  const mockDispatch = (opts, handler) => {
+    dispatches++
+    handler.onConnect(() => {})
+    // Invalid but finite content-length: Number('-5') passes the
+    // Number.isFinite screen in onHeaders, so #end is tracked as -5 — the
+    // resume guard must treat it as non-resumable, not just #end === 0.
+    handler.onHeaders(200, { 'content-length': '-5', etag: '"neg"' }, () => {})
+    // Socket dies between headers and message complete.
+    handler.onError(originalErr)
+    return true
+  }
+  const dispatch = compose(mockDispatch, interceptors.responseRetry())
+
+  const err = await new Promise((resolve, reject) => {
+    dispatch(
+      { method: 'GET', path: '/', origin: 'http://x', retry: () => true },
+      {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          reject(new Error('should not complete'))
+        },
+        onError: resolve,
+      },
+    )
+  })
+
+  t.not(err.name, 'AssertionError', 'must not surface an internal AssertionError')
+  t.equal(err, originalErr, 'the original network error is delivered')
+  t.equal(dispatches, 1, 'no resume attempt is dispatched for a negative content-length')
 })
 
 // ---------------------------------------------------------------------------

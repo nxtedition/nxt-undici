@@ -282,3 +282,59 @@ test('log: origin with userinfo credentials is logged without them', async (t) =
   t.notMatch(text, /secret-user/, 'username absent from all captured logs')
   t.notMatch(text, /hunter2/, 'password absent from all captured logs')
 })
+
+// ---------------------------------------------------------------------------
+// Copy-on-write fast path: nothing to redact → no new objects are allocated
+// ---------------------------------------------------------------------------
+
+test('log: clean headers and origin are passed through by reference (no copy)', async (t) => {
+  // Drive the interceptor over a stub dispatch so the exact opts objects reach
+  // the log handler and identity can be asserted on the captured binding.
+  const logger = makeCapturingLogger()
+  const dispatch = interceptors.log()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, ['content-length', '0'], () => {})
+    handler.onComplete([])
+    return true
+  })
+  const headers = {
+    accept: 'application/json',
+    'x-plain': 'visible-value',
+    'x-multi': ['first-value', 'second-value'],
+  }
+  const origin = 'http://127.0.0.1:8080'
+  const status = await rawRequest(dispatch, { origin, path: '/', method: 'GET', headers, logger })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.equal(ureq.headers, headers, 'zero-mutation header object bound by reference, not copied')
+  t.equal(ureq.origin, origin, 'origin without userinfo logged as-is without URL parsing')
+  t.equal(ureq.headers['x-plain'], 'visible-value', 'values still readable through the binding')
+})
+
+test('log: headers needing work still produce a sanitized copy', async (t) => {
+  const logger = makeCapturingLogger()
+  const dispatch = interceptors.log()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, ['content-length', '0'], () => {})
+    handler.onComplete([])
+    return true
+  })
+  const headers = { 'X-Mixed-Case': 'visible-value', cookie: 'session=super-secret-cookie' }
+  const status = await rawRequest(dispatch, {
+    origin: 'http://127.0.0.1:8080',
+    path: '/',
+    method: 'GET',
+    headers,
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.not(ureq.headers, headers, 'headers with a secret are copied, original left untouched')
+  t.equal(ureq.headers['x-mixed-case'], 'visible-value', 'mixed-case names still lowercased')
+  t.equal(ureq.headers.cookie, '[redacted]', 'secret still redacted on the slow path')
+  t.equal(headers.cookie, 'session=super-secret-cookie', 'caller headers object not mutated')
+})

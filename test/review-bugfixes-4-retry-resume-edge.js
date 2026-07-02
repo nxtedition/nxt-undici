@@ -19,6 +19,9 @@ import { compose, interceptors, request } from '../lib/index.js'
 // 4. When a resume attempt is answered with an unexpected status (e.g. 503),
 //    the surfaced error must describe THAT response — not only the stale
 //    error from the previous failure.
+// 5. A pos 0 resume with no usable etag (e.g. the server sent a weak etag,
+//    which is discarded) must not send an if-match header at all — a null
+//    etag would go on the wire as an invalid empty `if-match:` value.
 
 // ---------------------------------------------------------------------------
 // Bug 1: zero-length body + error between headers and complete.
@@ -216,5 +219,43 @@ test('retry: resume attempt answered with 503 surfaces the 503, not the stale pr
     t.ok(err.cause, 'the previous failure is preserved as cause')
     t.not(err.cause?.statusCode, 503, 'cause is the prior network error, not the 503')
   }
+  t.equal(attempts, 2, 'initial attempt + one resume attempt')
+})
+
+// ---------------------------------------------------------------------------
+// Bug 5: pos 0 resume without a usable etag must not send if-match.
+// A weak etag is discarded by the retry handler (not byte-comparable), so the
+// resume re-dispatch holds no etag — writing it unconditionally sends an
+// invalid empty `if-match:` header on the wire.
+// ---------------------------------------------------------------------------
+
+test('retry: pos 0 resume without a usable etag omits the if-match header', async (t) => {
+  t.plan(4)
+
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      // Weak etag → discarded; headers only, then die, so the resume starts
+      // at pos 0 with no etag to validate against.
+      res.writeHead(200, { 'content-length': '5', etag: 'W/"weak"' })
+      res.flushHeaders()
+      setTimeout(() => res.destroy(), 50)
+    } else {
+      t.notOk('if-match' in req.headers, 'no if-match header on the wire')
+      t.equal(req.headers.range, 'bytes=0-4', 'resume still requests the full range')
+      res.writeHead(200, { 'content-length': '5' })
+      res.end('hello')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+    retry: () => true,
+  })
+  const text = await body.text()
+  t.equal(text, 'hello', 'body delivered after the etag-less pos 0 resume')
   t.equal(attempts, 2, 'initial attempt + one resume attempt')
 })

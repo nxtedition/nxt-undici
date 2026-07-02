@@ -121,6 +121,9 @@ export interface ProxyOptions {
 export interface CacheOptions {
   store?: CacheStore
   maxEntrySize?: number
+  // Opt in to reading entries cached from Cache-Control: private responses
+  // (private redirects). Without it such entries are bypassed on read.
+  private?: boolean
 }
 
 export interface VerifyOptions {
@@ -156,6 +159,7 @@ export interface CacheValue {
   vary?: Record<string, string | string[]>
   cachedAt: number
   deleteAt?: number
+  private?: boolean
 }
 
 export interface CacheGetResult {
@@ -168,6 +172,7 @@ export interface CacheGetResult {
   vary?: Record<string, string | string[]>
   cachedAt: number
   deleteAt: number
+  private?: boolean
 }
 
 export interface CacheStore {

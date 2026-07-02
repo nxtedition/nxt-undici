@@ -130,7 +130,16 @@ export interface VerifyOptions {
 
 export interface DnsOptions {
   ttl?: number
+  /** How long (ms) a failed lookup is negative-cached; requests inside this
+   *  window fail fast without hitting the resolver again (default 1000). */
+  negativeTTL?: number
   balance?: 'hash'
+  /** Custom resolver, `dns.lookup`-compatible (called with `{ all: true }`). */
+  lookup?: (
+    hostname: string,
+    options: { all: boolean },
+    callback: (err: Error | null, addresses: { address: string; family: number }[]) => void,
+  ) => void
 }
 
 export interface LogInterceptorOptions {

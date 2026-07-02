@@ -84,7 +84,7 @@ test('cache: caller mutation of res.headers during body streaming does not poiso
 // a server-sent `__proto__` header before the interceptor ever sees it — so
 // drive the cache interceptor directly with a fake inner dispatcher.
 test('cache: a __proto__ response header is snapshotted as a data property', async (t) => {
-  t.plan(6)
+  t.plan(7)
 
   const store = new SqliteCacheStore({ location: ':memory:' })
   t.teardown(() => store.close())
@@ -148,6 +148,9 @@ test('cache: a __proto__ response header is snapshotted as a data property', asy
 
   const res2 = await dispatchOnce()
   t.equal(hits, 1, 'second dispatch is served from cache')
+  // The real invariant: the replayed headers object retains __proto__ as an
+  // OWN data property — it was neither dropped nor routed to the setter.
+  t.ok(Object.hasOwn(res2.headers, '__proto__'), 'replayed headers own the __proto__ key')
   const desc = Object.getOwnPropertyDescriptor(res2.headers, '__proto__')
   t.equal(desc?.value, 'boom', 'cached __proto__ header replays as an own data property')
   t.equal(res2.headers['cache-control'], 's-maxage=60', 'other cached headers are intact')

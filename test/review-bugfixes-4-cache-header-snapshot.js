@@ -47,6 +47,7 @@ test('cache: caller mutation of res.headers during body streaming does not poiso
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatcher = makeDispatch()
   const origin = `http://0.0.0.0:${server.address().port}`
 

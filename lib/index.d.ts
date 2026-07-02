@@ -55,17 +55,25 @@ export interface LoggerLike {
   info(obj: unknown, msg?: string): void
 }
 
+export type BodyFactoryResult =
+  | Readable
+  | Uint8Array
+  | string
+  | Iterable<unknown>
+  | AsyncIterable<unknown>
+
+/** Called with an options object (not a bare signal); the signal aborts when the
+ *  request is destroyed before the factory resolves. May be async. */
+export type BodyFactory = (opts: {
+  signal: AbortSignal
+}) => BodyFactoryResult | Promise<BodyFactoryResult>
+
 export interface DispatchOptions {
   id?: string | null
   origin?: string | null
   path?: string | null
   method?: string | null
-  body?:
-    | Readable
-    | Uint8Array
-    | string
-    | ((signal: AbortSignal) => Readable | Uint8Array | string | Iterable<unknown>)
-    | null
+  body?: Readable | Uint8Array | string | BodyFactory | null
   query?: Record<string, unknown> | null
   headers?: Record<string, string | string[] | null | undefined> | null
   signal?: AbortSignal | null
@@ -80,8 +88,13 @@ export interface DispatchOptions {
   retry?: RetryOptions | number | boolean | RetryFn | null
   proxy?: ProxyOptions | boolean | null
   cache?: CacheOptions | boolean | null
-  upgrade?: boolean | null
+  /** Protocol to upgrade to (e.g. 'websocket'). undici requires a string and the
+   *  dispatch handler must implement onUpgrade — only meaningful with raw
+   *  dispatch()/compose(); request() has no upgrade support (see RequestOptions). */
+  upgrade?: string | null
   follow?: number | FollowFn | boolean | null
+  /** Alias for `follow`; ignored when `follow` is also set. */
+  redirect?: number | FollowFn | boolean | null
   error?: boolean | null
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
@@ -121,6 +134,8 @@ export interface ProxyOptions {
 export interface CacheOptions {
   store?: CacheStore
   maxEntrySize?: number
+  /** Upper bound on an entry's freshness lifetime, in seconds (default 30 days). */
+  maxEntryTTL?: number
 }
 
 export interface VerifyOptions {
@@ -256,10 +271,14 @@ export interface CacheStore {
   close(): void
 }
 
-export interface RequestOptions extends DispatchOptions {
+/** `upgrade` is omitted: request()'s internal handler has no onUpgrade, so any
+ *  upgrade attempt rejects with InvalidArgumentError — use dispatch() instead. */
+export interface RequestOptions extends Omit<DispatchOptions, 'upgrade'> {
   url?: URLLike | null
   dispatch?: DispatchFn | null
   dispatcher?: Dispatcher | null
+  /** highWaterMark for the response body readable (non-negative number). */
+  highWaterMark?: number | null
 }
 
 export interface ResponseData {

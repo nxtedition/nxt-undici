@@ -277,14 +277,36 @@ test('request-id: empty opts.id falls back to the request-id header', (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// query: a path-less object URL fails with a clear message, not a cryptic
-// "Cannot read properties of undefined".
+// query: request() now defaults a path-less object URL to '/', so a query on
+// a path-less request works. The interceptor's clear non-string-path message
+// (instead of a cryptic "Cannot read properties of undefined") still guards
+// raw dispatch, which performs no such defaulting.
 // ---------------------------------------------------------------------------
 
-test('query: path-less request with query rejects with a clear message', async (t) => {
+test('query: path-less request with query resolves against /', async (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    t.equal(req.url, '/?a=1', 'query appended to the defaulted /')
+    res.end('ok')
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.teardown(() => server.close())
+
+  const { statusCode, body } = await request({
+    origin: `http://127.0.0.1:${server.address().port}`,
+    query: { a: 1 },
+    retry: false,
+  })
+  await body.dump()
+  t.equal(statusCode, 200)
+})
+
+test('query: raw dispatch without a path rejects with a clear message', async (t) => {
   t.plan(1)
-  await t.rejects(
-    request({ origin: 'http://0.0.0.0:1', query: { a: 1 }, retry: false }),
+  const dispatch = compose((opts, handler) => handler.onComplete(), interceptors.query())
+  t.throws(
+    () => dispatch({ origin: 'http://0.0.0.0:1', query: { a: 1 } }, {}),
     /string path/,
     'clear error instead of a cryptic TypeError',
   )

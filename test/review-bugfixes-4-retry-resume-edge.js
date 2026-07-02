@@ -22,6 +22,11 @@ import { compose, interceptors, request } from '../lib/index.js'
 // 5. A pos 0 resume with no usable etag (e.g. the server sent a weak etag,
 //    which is discarded) must not send an if-match header at all — a null
 //    etag would go on the wire as an invalid empty `if-match:` value.
+// 6. An if-match written by a PREVIOUS resume attempt must not leak into the
+//    next resume once #etag has been cleared (full-200 restart with a weak
+//    etag) — the re-dispatch spreads the reassigned opts.headers, so the
+//    stale validator persists unless it is deleted before the conditional
+//    re-set.
 
 // ---------------------------------------------------------------------------
 // Bug 1: zero-length body + error between headers and complete.
@@ -258,4 +263,52 @@ test('retry: pos 0 resume without a usable etag omits the if-match header', asyn
   const text = await body.text()
   t.equal(text, 'hello', 'body delivered after the etag-less pos 0 resume')
   t.equal(attempts, 2, 'initial attempt + one resume attempt')
+})
+
+// ---------------------------------------------------------------------------
+// Bug 6: a stale if-match from a previous resume attempt must not leak into
+// the next resume after #etag was cleared. The resume re-dispatch REASSIGNS
+// this.#opts with the if-match merged into headers; the next resume spreads
+// those headers, so the old validator survives unless deleted before the
+// conditional re-set.
+// ---------------------------------------------------------------------------
+
+test('retry: stale if-match from a previous resume is not sent once the etag is cleared', async (t) => {
+  t.plan(5)
+
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      // Strong etag; headers only, then die → resume starts at pos 0 holding
+      // etag "v1".
+      res.writeHead(200, { 'content-length': '10', etag: '"v1"' })
+      res.flushHeaders()
+      setTimeout(() => res.destroy(), 50)
+    } else if (attempts === 2) {
+      t.equal(req.headers['if-match'], '"v1"', 'first resume validates against the held etag')
+      // Full-200 restart with a WEAK etag → the retry handler clears #etag.
+      // Die again before any body byte, forcing a second pos 0 resume.
+      res.writeHead(200, { 'content-length': '10', etag: 'W/"v2"' })
+      res.flushHeaders()
+      setTimeout(() => res.destroy(), 50)
+    } else {
+      // No usable etag is held any more — the stale "v1" validator from the
+      // first resume must NOT be replayed on the wire.
+      t.notOk('if-match' in req.headers, 'stale if-match is not carried into the second resume')
+      t.equal(req.headers.range, 'bytes=0-9', 'second resume still requests the full range')
+      res.writeHead(200, { 'content-length': '10' })
+      res.end('helloworld')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
+    retry: () => true,
+  })
+  const text = await body.text()
+  t.equal(text, 'helloworld', 'body delivered after the second resume')
+  t.equal(attempts, 3, 'initial attempt + two resume attempts')
 })

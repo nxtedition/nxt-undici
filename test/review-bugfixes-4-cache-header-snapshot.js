@@ -75,3 +75,85 @@ test('cache: caller mutation of res.headers during body streaming does not poiso
   t.equal(res2.headers['cache-control'], 's-maxage=60', 'deleted cache-control is preserved')
   t.equal(res2.headers['content-type'], 'text/plain', 'original headers are intact')
 })
+
+// Regression: the snapshot map was a plain `{}`, so a response header literally
+// named `__proto__` hit the Object.prototype setter instead of becoming a data
+// property — silently dropped (string value) or a prototype-pollution vector
+// (array value). The snapshot must use a null prototype. Note: this can't be
+// driven end-to-end over HTTP — undici core's parseHeaders currently throws on
+// a server-sent `__proto__` header before the interceptor ever sees it — so
+// drive the cache interceptor directly with a fake inner dispatcher.
+test('cache: a __proto__ response header is snapshotted as a data property', async (t) => {
+  t.plan(6)
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+
+  let hits = 0
+  const fakeDispatch = (opts, handler) => {
+    hits++
+    // Parsed-headers object with an own `__proto__` data property, as a
+    // prototype-pollution-safe parse of a `__proto__: boom` field would yield.
+    const headers = { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' }
+    Object.defineProperty(headers, '__proto__', {
+      value: 'boom',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+    handler.onConnect(() => {})
+    handler.onHeaders(200, headers, () => true)
+    handler.onData(Buffer.from('hello'))
+    handler.onComplete(null)
+    return true
+  }
+
+  const dispatch = interceptors.cache()(fakeDispatch)
+
+  const dispatchOnce = () =>
+    new Promise((resolve, reject) => {
+      let statusCode
+      let headers
+      dispatch(
+        {
+          origin: 'http://cache-proto.local',
+          path: '/',
+          method: 'GET',
+          headers: {},
+          cache: { store },
+        },
+        {
+          onConnect() {},
+          onHeaders(code, h) {
+            statusCode = code
+            headers = h
+            return true
+          },
+          onData() {
+            return true
+          },
+          onComplete() {
+            resolve({ statusCode, headers })
+          },
+          onError(err) {
+            reject(err)
+          },
+        },
+      )
+    })
+
+  const res1 = await dispatchOnce()
+  t.equal(res1.statusCode, 200, 'first dispatch reaches the origin')
+  t.equal(hits, 1, 'first dispatch hits the origin')
+
+  const res2 = await dispatchOnce()
+  t.equal(hits, 1, 'second dispatch is served from cache')
+  const desc = Object.getOwnPropertyDescriptor(res2.headers, '__proto__')
+  t.equal(desc?.value, 'boom', 'cached __proto__ header replays as an own data property')
+  t.equal(res2.headers['cache-control'], 's-maxage=60', 'other cached headers are intact')
+  t.equal(
+    Object.getOwnPropertyDescriptor(Object.prototype, 'boom'),
+    undefined,
+    'Object.prototype is not polluted',
+  )
+})

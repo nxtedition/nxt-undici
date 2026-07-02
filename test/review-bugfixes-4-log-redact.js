@@ -283,6 +283,57 @@ test('log: origin with userinfo credentials is logged without them', async (t) =
   t.notMatch(text, /hunter2/, 'password absent from all captured logs')
 })
 
+test('log: URL-like object origin does not bypass the userinfo check', async (t) => {
+  // A plain object with a string `.origin` property must NOT get the URL fast
+  // path — `{ origin: 'http://user:pass@host' }` would leak credentials
+  // verbatim. Only real URL instances (whose `.origin` never contains
+  // userinfo) may skip the string normalization.
+  const logger = makeCapturingLogger()
+  const dispatch = interceptors.log()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, ['content-length', '0'], () => {})
+    handler.onComplete([])
+    return true
+  })
+  const status = await rawRequest(dispatch, {
+    origin: { origin: 'http://secret-user:hunter2@127.0.0.1:8080' },
+    path: '/',
+    method: 'GET',
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  const text = capturedText(logger)
+  t.notMatch(text, /secret-user/, 'username absent from all captured logs')
+  t.notMatch(text, /hunter2/, 'password absent from all captured logs')
+})
+
+test('log: real URL instance origin uses its credential-free origin', async (t) => {
+  const logger = makeCapturingLogger()
+  const dispatch = interceptors.log()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, ['content-length', '0'], () => {})
+    handler.onComplete([])
+    return true
+  })
+  const status = await rawRequest(dispatch, {
+    origin: new URL('http://secret-user:hunter2@127.0.0.1:8080'),
+    path: '/',
+    method: 'GET',
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.equal(ureq.origin, 'http://127.0.0.1:8080', 'URL instance reduced to credential-free origin')
+  const text = capturedText(logger)
+  t.notMatch(text, /secret-user/, 'username absent from all captured logs')
+  t.notMatch(text, /hunter2/, 'password absent from all captured logs')
+})
+
 // ---------------------------------------------------------------------------
 // Copy-on-write fast path: nothing to redact → no new objects are allocated
 // ---------------------------------------------------------------------------

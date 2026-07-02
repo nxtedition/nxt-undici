@@ -574,6 +574,31 @@ test('dns: preserves an explicit user-supplied host header', async (t) => {
   t.equal(seenHost, 'virtual.example.com', 'explicit host header reaches the server')
 })
 
+test('dns: array host header (duplicate field-lines) falls back to origin-derived host', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const port = server.address().port
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${port}`,
+    path: '/',
+    method: 'GET',
+    // Host is a singular header — a non-string value (e.g. an array from
+    // duplicate Host field-lines) is not preserved, matching priority.js.
+    headers: { host: ['a.example.com', 'b.example.com'] },
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, `localhost:${port}`, 'non-string host falls back to the origin-derived host')
+})
+
 test('dns: derives host header from origin when none is supplied', async (t) => {
   t.plan(2)
   let seenHost

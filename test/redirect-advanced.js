@@ -317,6 +317,72 @@ test('redirect: same-origin redirect preserves authorization header', async (t) 
 })
 
 // ---------------------------------------------------------------------------
+// Cross-origin redirect strips proxy-authorization header
+// ---------------------------------------------------------------------------
+
+test('redirect: cross-origin redirect strips proxy-authorization', async (t) => {
+  t.plan(2)
+  const serverB = await startServer((req, res) => {
+    t.notOk(
+      req.headers['proxy-authorization'],
+      'proxy-authorization header must be stripped on cross-origin',
+    )
+    res.writeHead(200)
+    res.end()
+  })
+  t.teardown(serverB.close.bind(serverB))
+
+  const serverA = await startServer((req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${serverB.address().port}/dest` })
+    res.end()
+  })
+  t.teardown(serverA.close.bind(serverA))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${serverA.address().port}`,
+    path: '/start',
+    method: 'GET',
+    headers: { 'proxy-authorization': 'Basic c2VjcmV0OnNlY3JldA==' },
+    follow: 5,
+  })
+  t.equal(status, 200)
+})
+
+// ---------------------------------------------------------------------------
+// Same-origin redirect preserves proxy-authorization header
+// ---------------------------------------------------------------------------
+
+test('redirect: same-origin redirect preserves proxy-authorization header', async (t) => {
+  t.plan(2)
+  let proxyAuthOnRedirect = null
+  let hop = 0
+  const server = await startServer((req, res) => {
+    hop++
+    if (hop === 1) {
+      res.writeHead(301, { location: '/dest' })
+      res.end()
+    } else {
+      proxyAuthOnRedirect = req.headers['proxy-authorization']
+      res.writeHead(200)
+      res.end()
+    }
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.redirect())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/start',
+    method: 'GET',
+    headers: { 'proxy-authorization': 'Basic c2VjcmV0OnNlY3JldA==' },
+    follow: 5,
+  })
+  t.equal(status, 200)
+  t.ok(proxyAuthOnRedirect, 'proxy-authorization preserved for same-origin redirect')
+})
+
+// ---------------------------------------------------------------------------
 // 307 redirect preserves method (PUT stays PUT)
 // ---------------------------------------------------------------------------
 

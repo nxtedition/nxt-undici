@@ -161,3 +161,51 @@ test('cache: capitalized If-None-Match behaves like lowercase', async (t) => {
   t.equal(missed.statusCode, 200, 'non-matching If-None-Match yields the full response')
   t.equal(hits, 2, 'non-matching If-None-Match bypasses the cache to origin')
 })
+
+// ---------------------------------------------------------------------------
+// Header names are caller-controlled, so the lowercased key-header map must be
+// prototype-pollution safe. `__proto__` is a valid header token: on a plain
+// `{}` map, assigning it hits the Object.prototype setter — string values are
+// silently dropped (the header vanishes from the cache key, breaking Vary
+// matching) and object values overwrite the map's prototype.
+// ---------------------------------------------------------------------------
+
+test('cache: a __proto__ request header is kept as a plain key and does not pollute', async (t) => {
+  t.plan(4)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      vary: '__proto__',
+      'content-type': 'text/plain',
+    })
+    res.end(`body-${hits}`)
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  }
+
+  // Populate the cache with __proto__: a.
+  await rawRequest(dispatch, { ...base, headers: { ['__proto__']: 'a' } })
+  t.equal(hits, 1, 'response is cached')
+
+  // Same __proto__ value → served from cache.
+  await rawRequest(dispatch, { ...base, headers: { ['__proto__']: 'a' } })
+  t.equal(hits, 1, 'matching __proto__ vary value is served from cache')
+
+  // Different __proto__ value → Vary mismatch, must go to origin. With a
+  // plain `{}` map the header is dropped from the key, so both requests
+  // falsely share the cached entry.
+  await rawRequest(dispatch, { ...base, headers: { ['__proto__']: 'b' } })
+  t.equal(hits, 2, 'different __proto__ vary value goes to origin')
+
+  t.equal({}.a, undefined, 'Object.prototype is not polluted')
+})

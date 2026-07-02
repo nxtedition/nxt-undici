@@ -182,3 +182,103 @@ test('log: buffer body is summarized and flat-array headers are redacted', async
   t.notMatch(text, /dXNlcjpwYXNz/, 'proxy-authorization value absent from all captured logs')
   t.notMatch(text, /buffer-body-secret-payload/, 'buffer content absent from all captured logs')
 })
+
+// ---------------------------------------------------------------------------
+// Duplicate flat-array headers merge into an array instead of overwriting
+// ---------------------------------------------------------------------------
+
+test('log: duplicate flat-array header names merge into an array', async (t) => {
+  const server = await startServer()
+  t.teardown(server.close.bind(server))
+
+  const logger = makeCapturingLogger()
+  const dispatch = compose(new undici.Agent(), interceptors.log())
+  const status = await rawRequest(dispatch, {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: ['X-Multi', 'first-value', 'x-multi', 'second-value', 'x-plain', 'visible-value'],
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.strictSame(
+    ureq.headers['x-multi'],
+    ['first-value', 'second-value'],
+    'duplicate names merged into an array, first value not overwritten',
+  )
+  t.equal(ureq.headers['x-plain'], 'visible-value', 'unique headers stay plain strings')
+})
+
+// ---------------------------------------------------------------------------
+// Object-form header values are stringified, null/undefined skipped
+// ---------------------------------------------------------------------------
+
+test('log: object-form Buffer header values are stringified and nullish values skipped', async (t) => {
+  // undici's own Request validation rejects Buffer values in object-form
+  // headers before they reach the wire, but the log binding is built from the
+  // raw opts before dispatch validation runs — so drive the interceptor over a
+  // stub dispatch to assert the sanitizer stringifies rather than letting pino
+  // serialize `{type:'Buffer',data:[...]}` blobs into the bindings.
+  const logger = makeCapturingLogger()
+  const dispatch = interceptors.log()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, ['content-length', '0'], () => {})
+    handler.onComplete([])
+    return true
+  })
+  const status = await rawRequest(dispatch, {
+    origin: 'http://127.0.0.1:8080',
+    path: '/',
+    method: 'GET',
+    headers: {
+      'x-buf': Buffer.from('buffer-header-value'),
+      'x-null': null,
+      'x-undefined': undefined,
+      'x-plain': 'visible-value',
+    },
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.equal(ureq.headers['x-buf'], 'buffer-header-value', 'Buffer value stringified')
+  t.notOk('x-null' in ureq.headers, 'null header value skipped')
+  t.notOk('x-undefined' in ureq.headers, 'undefined header value skipped')
+  t.equal(ureq.headers['x-plain'], 'visible-value', 'plain string values preserved')
+
+  const text = capturedText(logger)
+  t.notMatch(text, /type.{0,3}Buffer/, 'no serialized Buffer objects leaked into logs')
+  t.notMatch(text, /"data"|data:\s*\[/, 'no Buffer data arrays leaked into logs')
+})
+
+// ---------------------------------------------------------------------------
+// Origin userinfo credentials must not reach the logger
+// ---------------------------------------------------------------------------
+
+test('log: origin with userinfo credentials is logged without them', async (t) => {
+  const server = await startServer()
+  t.teardown(server.close.bind(server))
+
+  const logger = makeCapturingLogger()
+  const dispatch = compose(new undici.Agent(), interceptors.log())
+  const port = server.address().port
+  const status = await rawRequest(dispatch, {
+    origin: `http://secret-user:hunter2@127.0.0.1:${port}`,
+    path: '/',
+    method: 'GET',
+    logger,
+  })
+  t.equal(status, 200)
+
+  const ureq = logger.bindings[0]?.ureq
+  t.ok(ureq, 'child() was called with a ureq binding')
+  t.equal(ureq.origin, `http://127.0.0.1:${port}`, 'origin normalized without userinfo')
+
+  const text = capturedText(logger)
+  t.notMatch(text, /secret-user/, 'username absent from all captured logs')
+  t.notMatch(text, /hunter2/, 'password absent from all captured logs')
+})

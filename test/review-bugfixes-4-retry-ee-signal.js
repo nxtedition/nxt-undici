@@ -144,6 +144,141 @@ test('retry: method-less signal via raw dispatch does not crash the backoff wait
   })
 })
 
+test('retry: signal with on but no removeListener does not crash the backoff wait', (t) => {
+  t.plan(3)
+
+  // Half a subscribe/unsubscribe pair is as dangerous as none: subscribing
+  // via .on and later calling a missing .removeListener would crash when the
+  // backoff timer fires. The sleep must require a MATCHING pair up front and
+  // fall back to a plain timer otherwise — no subscription, retry proceeds.
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.writeHead(503, {})
+      res.end('busy')
+    } else {
+      res.writeHead(200, {})
+      res.end('ok')
+    }
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const client = new undici.Client(`http://0.0.0.0:${server.address().port}`)
+    t.teardown(client.close.bind(client))
+
+    const dispatch = compose(client, interceptors.responseRetry())
+
+    let subscribed = false
+    const signal = {
+      aborted: false,
+      on() {
+        subscribed = true
+      },
+      // no removeListener, no off
+    }
+
+    const result = await new Promise((resolve, reject) => {
+      let statusCode
+      const chunks = []
+      dispatch(
+        {
+          method: 'GET',
+          path: '/',
+          origin: `http://0.0.0.0:${server.address().port}`,
+          retry: { count: 3 },
+          signal,
+        },
+        {
+          onConnect() {},
+          onHeaders(sc) {
+            statusCode = sc
+            return true
+          },
+          onData(chunk) {
+            chunks.push(chunk)
+          },
+          onComplete() {
+            resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+          },
+          onError: reject,
+        },
+      )
+    })
+
+    t.equal(result.statusCode, 200, 'retried past the 503 with a removeListener-less signal')
+    t.equal(result.body, 'ok')
+    t.notOk(subscribed, 'never subscribed to a signal it could not unsubscribe from')
+  })
+})
+
+test('retry: signal whose subscribe throws does not crash the backoff wait', (t) => {
+  t.plan(2)
+
+  // Even with a matching method pair, a throwing subscribe must not reject
+  // the sleep or leave the timer callback calling an uninitialized remover —
+  // it degrades to a plain timer and the retry proceeds.
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.writeHead(503, {})
+      res.end('busy')
+    } else {
+      res.writeHead(200, {})
+      res.end('ok')
+    }
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const client = new undici.Client(`http://0.0.0.0:${server.address().port}`)
+    t.teardown(client.close.bind(client))
+
+    const dispatch = compose(client, interceptors.responseRetry())
+
+    const signal = {
+      aborted: false,
+      on() {
+        throw new Error('subscribe boom')
+      },
+      removeListener() {},
+    }
+
+    const result = await new Promise((resolve, reject) => {
+      let statusCode
+      const chunks = []
+      dispatch(
+        {
+          method: 'GET',
+          path: '/',
+          origin: `http://0.0.0.0:${server.address().port}`,
+          retry: { count: 3 },
+          signal,
+        },
+        {
+          onConnect() {},
+          onHeaders(sc) {
+            statusCode = sc
+            return true
+          },
+          onData(chunk) {
+            chunks.push(chunk)
+          },
+          onComplete() {
+            resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+          },
+          onError: reject,
+        },
+      )
+    })
+
+    t.equal(result.statusCode, 200, 'retried past the 503 with a throwing subscribe')
+    t.equal(result.body, 'ok')
+  })
+})
+
 test('retry: request() rejects method-less signals before dispatch', async (t) => {
   t.plan(2)
 

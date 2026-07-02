@@ -599,6 +599,31 @@ test('dns: array host header (duplicate field-lines) falls back to origin-derive
   t.equal(seenHost, `localhost:${port}`, 'non-string host falls back to the origin-derived host')
 })
 
+test('dns: empty-string host header falls back to origin-derived host', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const port = server.address().port
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${port}`,
+    path: '/',
+    method: 'GET',
+    // An empty string is not a usable host — it is not preserved, matching
+    // the non-empty-string rule in priority.js.
+    headers: { host: '' },
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, `localhost:${port}`, 'empty-string host falls back to the origin-derived host')
+})
+
 test('dns: derives host header from origin when none is supplied', async (t) => {
   t.plan(2)
   let seenHost

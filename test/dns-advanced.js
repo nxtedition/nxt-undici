@@ -544,3 +544,105 @@ test('dns: IPv6 record address is bracketed when rewriting origin', async (t) =>
   t.ok(sawIPv6, `at least one origin is bracketed IPv6: ${[...origins].join(', ')}`)
   t.notOk(sawUnresolved, `no origin still contains 'localhost': ${[...origins].join(', ')}`)
 })
+
+// ---------------------------------------------------------------------------
+// Host header handling: the interceptor rewrites origin to the resolved IP and
+// pins the host header to the logical hostname — but an EXPLICIT user-supplied
+// host header (virtual hosting: origin = backend node, host = public vhost)
+// must be preserved, not clobbered by the origin-derived one.
+// ---------------------------------------------------------------------------
+
+test('dns: preserves an explicit user-supplied host header', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: { host: 'virtual.example.com' },
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, 'virtual.example.com', 'explicit host header reaches the server')
+})
+
+test('dns: array host header (duplicate field-lines) falls back to origin-derived host', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const port = server.address().port
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${port}`,
+    path: '/',
+    method: 'GET',
+    // Host is a singular header — a non-string value (e.g. an array from
+    // duplicate Host field-lines) is not preserved, matching priority.js.
+    headers: { host: ['a.example.com', 'b.example.com'] },
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, `localhost:${port}`, 'non-string host falls back to the origin-derived host')
+})
+
+test('dns: empty-string host header falls back to origin-derived host', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const port = server.address().port
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${port}`,
+    path: '/',
+    method: 'GET',
+    // An empty string is not a usable host — it is not preserved, matching
+    // the non-empty-string rule in priority.js.
+    headers: { host: '' },
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, `localhost:${port}`, 'empty-string host falls back to the origin-derived host')
+})
+
+test('dns: derives host header from origin when none is supplied', async (t) => {
+  t.plan(2)
+  let seenHost
+  const server = await startServer((req, res) => {
+    seenHost = req.headers.host
+    res.writeHead(200)
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const port = server.address().port
+  const dispatch = compose(new undici.Agent(), interceptors.dns())
+  const status = await rawRequest(dispatch, {
+    origin: `http://localhost:${port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    dns: { ttl: 5000 },
+  })
+  t.equal(status, 200)
+  t.equal(seenHost, `localhost:${port}`, 'host header falls back to the logical origin host')
+})

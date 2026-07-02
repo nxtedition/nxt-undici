@@ -4,7 +4,7 @@ import { test } from 'tap'
 import undici from '@nxtedition/undici'
 import { compose, interceptors, request } from '../lib/index.js'
 
-// Regression tests for four range-resume edge cases in
+// Regression tests for range-resume edge cases in
 // lib/interceptor/response-retry.js:
 //
 // 1. A 200 with content-length: 0 that errors between headers and complete

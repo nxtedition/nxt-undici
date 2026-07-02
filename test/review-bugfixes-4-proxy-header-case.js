@@ -6,7 +6,7 @@ import undici from '@nxtedition/undici'
 
 // Regression tests: the dispatch-time request-header accumulator in
 // lib/interceptor/proxy.js must strip `content-length` (on non-payload
-// methods) and `expect` case-INsensitively. The production pipeline
+// methods) and `expect` case-insensitively. The production pipeline
 // lowercases keys via parseHeaders first, but the standalone
 // interceptors.proxy() composition passes user headers through verbatim, so
 // mixed-case `Content-Length` / `Expect` used to leak into undici, which

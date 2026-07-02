@@ -1,7 +1,8 @@
 import { createServer } from 'node:http'
 import { EventEmitter } from 'node:events'
 import { test } from 'tap'
-import { request } from '../lib/index.js'
+import { compose, interceptors, request } from '../lib/index.js'
+import undici from '@nxtedition/undici'
 
 // ---------------------------------------------------------------------------
 // response-retry: the library accepts EventEmitter-style abort signals (see
@@ -81,6 +82,80 @@ test('retry: EventEmitter signal abort during backoff rejects promptly', (t) => 
       t.equal(attempts, 1, 'no further attempts after abort')
     }
   })
+})
+
+test('retry: method-less signal via raw dispatch does not crash the backoff wait', (t) => {
+  t.plan(2)
+
+  // request() validates opts.signal up front (lib/request.js rejects anything
+  // without .on/.addEventListener with InvalidArgumentError), but a raw
+  // compose()/dispatch() caller can pass any opts.signal. The backoff wait
+  // must not blow up on signal.on not being a function — with no way to
+  // observe 'abort' it falls back to a plain timer and the retry proceeds.
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      res.writeHead(503, {})
+      res.end('busy')
+    } else {
+      res.writeHead(200, {})
+      res.end('ok')
+    }
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const client = new undici.Client(`http://0.0.0.0:${server.address().port}`)
+    t.teardown(client.close.bind(client))
+
+    const dispatch = compose(client, interceptors.responseRetry())
+
+    const result = await new Promise((resolve, reject) => {
+      let statusCode
+      const chunks = []
+      dispatch(
+        {
+          method: 'GET',
+          path: '/',
+          origin: `http://0.0.0.0:${server.address().port}`,
+          retry: { count: 3 },
+          signal: {}, // no .on, no .addEventListener, not an AbortSignal
+        },
+        {
+          onConnect() {},
+          onHeaders(sc) {
+            statusCode = sc
+            return true
+          },
+          onData(chunk) {
+            chunks.push(chunk)
+          },
+          onComplete() {
+            resolve({ statusCode, body: Buffer.concat(chunks).toString() })
+          },
+          onError: reject,
+        },
+      )
+    })
+
+    t.equal(result.statusCode, 200, 'retried past the 503 with a method-less signal')
+    t.equal(result.body, 'ok')
+  })
+})
+
+test('retry: request() rejects method-less signals before dispatch', async (t) => {
+  t.plan(2)
+
+  // Documents why the raw-dispatch case above is the only way a garbage
+  // signal can reach the retry backoff: the request() boundary throws first.
+  try {
+    await request('http://0.0.0.0:1', { signal: {}, retry: 3 })
+    t.fail('should have rejected')
+  } catch (err) {
+    t.equal(err.code, 'UND_ERR_INVALID_ARG')
+    t.match(err.message, /signal must be an EventEmitter or EventTarget/)
+  }
 })
 
 test('retry: AbortSignal abort during backoff still rejects promptly', (t) => {

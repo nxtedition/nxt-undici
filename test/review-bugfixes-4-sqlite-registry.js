@@ -30,6 +30,7 @@ function makeValue(overrides = {}) {
     statusCode: 200,
     statusMessage: 'OK',
     cachedAt: now,
+    staleAt: now + 3600e3,
     deleteAt: now + 7200e3,
     ...overrides,
   }
@@ -172,6 +173,7 @@ test('unclosed store is not pinned by the registry (GC can collect it)', async (
           statusCode: 200,
           statusMessage: 'OK',
           cachedAt: Date.now(),
+          staleAt: Date.now() + 3600e3,
           deleteAt: Date.now() + 7200e3,
         },
       )

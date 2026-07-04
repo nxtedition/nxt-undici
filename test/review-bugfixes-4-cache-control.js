@@ -72,6 +72,72 @@ test('parseCacheControl - non-string values return null', (t) => {
   t.end()
 })
 
+test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-negative)', (t) => {
+  t.strictSame(parseCacheControl('max-age=-1'), {}, 'negative max-age dropped')
+  t.strictSame(
+    parseCacheControl('s-maxage=-5, max-age=10'),
+    { 'max-age': 10 },
+    'negative dropped, valid kept',
+  )
+  t.strictSame(parseCacheControl('stale-if-error=-3'), {}, 'negative stale-if-error dropped')
+  t.end()
+})
+
+test('parseCacheControl - valueless directive with explicit = is an invalid qualified form', (t) => {
+  t.strictSame(parseCacheControl('public='), {}, 'public= is not treated as public')
+  t.strictSame(parseCacheControl('no-store='), {}, 'no-store= ignored')
+  t.strictSame(parseCacheControl('public'), { public: true }, 'bare public still works')
+  t.strictSame(parseCacheControl('immutable=x'), {}, 'qualified immutable ignored')
+  t.end()
+})
+
+test('parseCacheControl - unquoted private/no-cache value fails restrictive (unqualified)', (t) => {
+  t.strictSame(
+    parseCacheControl('private=set-cookie'),
+    { private: true },
+    'unquoted private value treated as unqualified private, not a field list',
+  )
+  t.strictSame(
+    parseCacheControl('no-cache=set-cookie'),
+    { 'no-cache': true },
+    'unquoted no-cache value treated as unqualified no-cache',
+  )
+  t.strictSame(
+    parseCacheControl('private="set-cookie"'),
+    { private: ['set-cookie'] },
+    'the quoted field-list form is still honored',
+  )
+  t.end()
+})
+
+test('parseCacheControl - whitespace around a delta-seconds value is tolerated (BWS/OWS)', (t) => {
+  t.strictSame(parseCacheControl('max-age= 60'), { 'max-age': 60 }, 'space after = tolerated')
+  t.strictSame(parseCacheControl('max-age=60 '), { 'max-age': 60 }, 'trailing space tolerated')
+  t.strictSame(
+    parseCacheControl('s-maxage= "60"'),
+    { 's-maxage': 60 },
+    'space before a quoted value tolerated',
+  )
+  t.strictSame(parseCacheControl('max-age= 60junk'), {}, 'garbage after trim still dropped')
+  t.end()
+})
+
+test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
+  t.strictSame(
+    parseCacheControl('max-age=60junk'),
+    {},
+    'trailing garbage dropped, not coerced to 60',
+  )
+  t.strictSame(parseCacheControl('max-age=1.5'), {}, 'decimal dropped')
+  t.strictSame(parseCacheControl('max-age="60"'), { 'max-age': 60 }, 'quoted integer still parses')
+  t.strictSame(
+    parseCacheControl('s-maxage=60x, max-age=10'),
+    { 'max-age': 10 },
+    'malformed s-maxage dropped, valid directive kept',
+  )
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Response side: duplicated Cache-Control field lines must not abort the
 // request. Previously the TypeError escaped CacheHandler.onHeaders and

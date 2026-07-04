@@ -134,8 +134,15 @@ export interface ProxyOptions {
 export interface CacheOptions {
   store?: CacheStore
   maxEntrySize?: number
-  /** Upper bound on an entry's freshness lifetime, in seconds (default 30 days). */
+  /** Upper bound on an entry's freshness lifetime AND retention, in seconds
+   *  (default 30 days). */
   maxEntryTTL?: number
+  /** Opt-in RFC 9111 §4.2.2 heuristic freshness (10% of time since
+   *  Last-Modified) for 200 responses without explicit expiration. */
+  heuristic?: boolean
+  /** Opt-in fallback freshness lifetime in seconds for 200 responses without
+   *  any expiration information. */
+  defaultTTL?: number
 }
 
 export interface VerifyOptions {
@@ -245,6 +252,8 @@ export interface CacheValue {
   etag?: string
   vary?: Record<string, string | string[]>
   cachedAt: number
+  /** Optional on set(): omitting it defaults to deleteAt (staleAt === deleteAt). */
+  staleAt?: number
   deleteAt?: number
 }
 
@@ -257,6 +266,7 @@ export interface CacheGetResult {
   cacheControlDirectives?: Record<string, unknown>
   vary?: Record<string, string | string[]>
   cachedAt: number
+  staleAt: number
   deleteAt: number
 }
 
@@ -266,6 +276,9 @@ export interface CacheStore {
     key: CacheKey,
     value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
   ): void
+  /** RFC 9111 §4.4 invalidation — optional; the cache interceptor
+   *  feature-detects it and skips invalidation when absent. */
+  delete?(key: CacheKey): void
   gc(): void
   clear(): void
   close(): void
@@ -338,6 +351,8 @@ export class SqliteCacheStore implements CacheStore {
     key: CacheKey,
     value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
   ): void
+  /** RFC 9111 §4.4: invalidates every stored response for the key's URI. */
+  delete(key: CacheKey): void
   gc(): void
   clear(): void
   close(): void

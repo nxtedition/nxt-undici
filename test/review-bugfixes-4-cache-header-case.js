@@ -58,8 +58,9 @@ test('cache: capitalized Authorization is not served a cached non-public respons
   const server = await startServer((req, res) => {
     hits++
     res.writeHead(200, {
-      // s-maxage but no 'public' — cacheable for anonymous requests only.
-      'cache-control': 's-maxage=60',
+      // max-age but no 'public'/'s-maxage'/'must-revalidate' — cacheable for
+      // anonymous requests only (RFC 9111 §3.5).
+      'cache-control': 'max-age=60',
       'content-type': 'text/plain',
     })
     res.end('non-public body')

@@ -134,6 +134,23 @@ test('basic get/set round-trip', async (t) => {
   t.end()
 })
 
+test('set() without staleAt defaults it to deleteAt (pre-v11 value shape)', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const key = makeKey({ path: '/no-staleat' })
+  const now = Date.now()
+  const value = makeValue({ path: '/no-staleat', cachedAt: now, deleteAt: now + 3600e3 })
+  delete value.staleAt
+
+  t.doesNotThrow(() => store.set(key, value), 'omitting staleAt is accepted')
+  await flush()
+  const result = store.get(key)
+  t.ok(result, 'entry stored and retrievable')
+  t.equal(result.staleAt, now + 3600e3, 'staleAt defaulted to deleteAt')
+  t.end()
+})
+
 test('get returns undefined for missing key', (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())

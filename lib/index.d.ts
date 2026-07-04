@@ -252,7 +252,8 @@ export interface CacheValue {
   etag?: string
   vary?: Record<string, string | string[]>
   cachedAt: number
-  staleAt: number
+  /** Optional on set(): omitting it defaults to deleteAt (staleAt === deleteAt). */
+  staleAt?: number
   deleteAt?: number
 }
 

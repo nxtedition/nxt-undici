@@ -117,6 +117,24 @@ test('invalid cache key throws TypeError before touching any shard', (t) => {
   t.end()
 })
 
+test('maxSize is split across shards and still yields workable budgets', async (t) => {
+  // A total not divisible by the shard count exercises the remainder split.
+  // Each shard must still receive a budget large enough to hold the schema —
+  // the base store throws SQLITE_FULL on a budget of only a page or two.
+  const maxSize = 8 * 1024 * 1024 + 3
+  const store = openStore(t, { shards: 4, maxSize })
+
+  for (let i = 0; i < 8; i++) {
+    store.set(makeKey({ path: `/ms-${i}` }), makeValue())
+  }
+  await flush()
+
+  for (let i = 0; i < 8; i++) {
+    t.ok(store.get(makeKey({ path: `/ms-${i}` })), `key ${i} stored under a split budget`)
+  }
+  t.end()
+})
+
 test('close() is idempotent', (t) => {
   const store = openStore(t, { shards: 3 })
   store.close()

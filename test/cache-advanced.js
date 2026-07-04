@@ -496,13 +496,13 @@ test('cache: authorization header allows caching when response has public direct
 // Response directives that prevent caching
 // ---------------------------------------------------------------------------
 
-test('cache: must-revalidate response directive prevents caching', async (t) => {
+test('cache: must-revalidate response is stored and served while fresh', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // This cache does not yet revalidate, so responses that require it are
-    // not stored (a follow-up adds revalidation and stores these).
+    // must-revalidate only constrains STALE reuse (RFC 9111 §5.2.2.2); a
+    // fresh entry serves normally.
     res.writeHead(200, { 'cache-control': 's-maxage=60, must-revalidate' })
     res.end('body')
   })
@@ -520,10 +520,10 @@ test('cache: must-revalidate response directive prevents caching', async (t) => 
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'must-revalidate responses are not cached')
+  t.equal(hits, 1, 'must-revalidate response is served from cache while fresh')
 })
 
-test('cache: proxy-revalidate response directive prevents caching', async (t) => {
+test('cache: proxy-revalidate response is stored and served while fresh', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
@@ -545,14 +545,22 @@ test('cache: proxy-revalidate response directive prevents caching', async (t) =>
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'proxy-revalidate responses are not cached')
+  t.equal(hits, 1, 'proxy-revalidate response is served from cache while fresh')
 })
 
-test('cache: no-cache response directive prevents caching', async (t) => {
-  t.plan(1)
+test('cache: no-cache response directive forces origin validation on every reuse', async (t) => {
+  t.plan(2)
   let hits = 0
+  let conditional = 0
   const server = await startServer((req, res) => {
     hits++
+    // Unqualified no-cache: the response may be stored, but must be
+    // validated with the origin before every reuse (RFC 9111 §5.2.2.4). This
+    // origin never answers 304, so every request pays a full round-trip —
+    // but the second one must arrive as a conditional request.
+    if (req.headers['if-modified-since']) {
+      conditional++
+    }
     res.writeHead(200, { 'cache-control': 'max-age=60, no-cache' })
     res.end('body')
   })
@@ -570,7 +578,8 @@ test('cache: no-cache response directive prevents caching', async (t) => {
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'no-cache responses are not cached')
+  t.equal(hits, 2, 'every reuse goes to the origin')
+  t.equal(conditional, 1, 'the reuse validated instead of serving from cache')
 })
 
 // ---------------------------------------------------------------------------

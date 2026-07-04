@@ -170,6 +170,27 @@ test('storability: served Age includes the age the response arrived with', async
   t.ok(Number(second.headers.age) >= 5, 'cachedAt backdating carries the initial age forward')
 })
 
+test('storability: malformed Age header is ignored, not coerced', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    // "5junk" must not be read as 5s of age (which would backdate cachedAt).
+    res.writeHead(200, { 'cache-control': 's-maxage=60', age: '5junk' })
+    res.end('body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+
+  await rawRequest(dispatch, opts)
+  const second = await rawRequest(dispatch, opts)
+  t.equal(hits, 1, 'still cached (malformed Age treated as absent)')
+  t.equal(Number(second.headers.age), 0, 'malformed Age not coerced into initial age')
+})
+
 // ---------------------------------------------------------------------------
 // RFC 9111 §3.5: authorization permits
 // ---------------------------------------------------------------------------

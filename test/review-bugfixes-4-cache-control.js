@@ -91,6 +91,22 @@ test('parseCacheControl - valueless directive with explicit = is an invalid qual
   t.end()
 })
 
+test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
+  t.strictSame(
+    parseCacheControl('max-age=60junk'),
+    {},
+    'trailing garbage dropped, not coerced to 60',
+  )
+  t.strictSame(parseCacheControl('max-age=1.5'), {}, 'decimal dropped')
+  t.strictSame(parseCacheControl('max-age="60"'), { 'max-age': 60 }, 'quoted integer still parses')
+  t.strictSame(
+    parseCacheControl('s-maxage=60x, max-age=10'),
+    { 'max-age': 10 },
+    'malformed s-maxage dropped, valid directive kept',
+  )
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Response side: duplicated Cache-Control field lines must not abort the
 // request. Previously the TypeError escaped CacheHandler.onHeaders and

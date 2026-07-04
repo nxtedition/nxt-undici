@@ -11,7 +11,6 @@
   "dependencies": {
     "@nxtedition/scheduler": "^4.1.1",
     "@nxtedition/undici": "^11.1.4",
-    "cache-control-parser": "^2.2.0",
     "fast-querystring": "^1.1.2",
     "http-errors": "^2.0.1",
     "xxhash-wasm": "^1.1.0"

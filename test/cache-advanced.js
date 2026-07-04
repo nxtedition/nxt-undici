@@ -439,13 +439,14 @@ test('cache: only-if-cached returns cached entry when one exists', async (t) => 
 // Authorization header
 // ---------------------------------------------------------------------------
 
-test('cache: authorization header prevents caching unless response has public directive', async (t) => {
+test('cache: authorization header prevents caching unless response permits it (public/s-maxage/must-revalidate)', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // s-maxage but no 'public' — should not be cached when request has authorization
-    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    // max-age only — RFC 9111 §3.5 requires public, s-maxage or
+    // must-revalidate for a shared cache to store an authorized response.
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
     res.end('private')
   })
   t.teardown(server.close.bind(server))
@@ -500,6 +501,8 @@ test('cache: must-revalidate response directive prevents caching', async (t) => 
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
+    // This cache does not yet revalidate, so responses that require it are
+    // not stored (a follow-up adds revalidation and stores these).
     res.writeHead(200, { 'cache-control': 's-maxage=60, must-revalidate' })
     res.end('body')
   })
@@ -1802,8 +1805,10 @@ test('cache: authorized request not cached without public directive', async (t) 
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
+    // max-age only — does not permit shared-cache storage of an authorized
+    // response (s-maxage/public/must-revalidate would, RFC 9111 §3.5).
     res.writeHead(200, {
-      'cache-control': 's-maxage=60',
+      'cache-control': 'max-age=60',
       'content-type': 'text/plain',
     })
     res.end('secret')
@@ -1963,9 +1968,10 @@ test('cache: cached non-public response is not served to request with Authorizat
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // First request has no Authorization, so response gets cached.
-    // Response has no 'public' directive.
-    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    // First request has no Authorization, so response gets cached. Response
+    // has no directive permitting authorized reuse (max-age doesn't count;
+    // public/s-maxage/must-revalidate would).
+    res.writeHead(200, { 'cache-control': 'max-age=60', 'content-type': 'text/plain' })
     res.end('data')
   })
   t.teardown(server.close.bind(server))

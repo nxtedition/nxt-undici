@@ -72,6 +72,25 @@ test('parseCacheControl - non-string values return null', (t) => {
   t.end()
 })
 
+test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-negative)', (t) => {
+  t.strictSame(parseCacheControl('max-age=-1'), {}, 'negative max-age dropped')
+  t.strictSame(
+    parseCacheControl('s-maxage=-5, max-age=10'),
+    { 'max-age': 10 },
+    'negative dropped, valid kept',
+  )
+  t.strictSame(parseCacheControl('stale-if-error=-3'), {}, 'negative stale-if-error dropped')
+  t.end()
+})
+
+test('parseCacheControl - valueless directive with explicit = is an invalid qualified form', (t) => {
+  t.strictSame(parseCacheControl('public='), {}, 'public= is not treated as public')
+  t.strictSame(parseCacheControl('no-store='), {}, 'no-store= ignored')
+  t.strictSame(parseCacheControl('public'), { public: true }, 'bare public still works')
+  t.strictSame(parseCacheControl('immutable=x'), {}, 'qualified immutable ignored')
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Response side: duplicated Cache-Control field lines must not abort the
 // request. Previously the TypeError escaped CacheHandler.onHeaders and

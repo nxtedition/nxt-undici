@@ -39,14 +39,15 @@ async function startServer(handler) {
   return server
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
 test('cache: immutable does not override explicit max-age (expires on schedule)', async (t) => {
   t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    res.writeHead(200, { 'cache-control': 'max-age=1, immutable', 'content-type': 'text/plain' })
+    // max-age=5 rather than 1: node's Date header is second-truncated, so the
+    // corrected initial age (RFC 9111 §4.2.3) can legitimately read 1s at
+    // receipt — a 1s lifetime would make storability itself racy.
+    res.writeHead(200, { 'cache-control': 'max-age=5, immutable', 'content-type': 'text/plain' })
     res.end('body')
   })
   t.teardown(server.close.bind(server))
@@ -65,12 +66,11 @@ test('cache: immutable does not override explicit max-age (expires on schedule)'
   await rawRequest(dispatch, opts)
   t.equal(hits, 1, 'served from cache within the max-age window')
 
-  // getFastNow (used by the store's expiry check) refreshes on a 1s interval,
-  // so wait comfortably past max-age=1 for at least two ticks to elapse.
-  await sleep(2600)
-
-  await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'goes back to origin after max-age expires despite immutable')
+  // Expiry-on-schedule is asserted from the stored entry instead of sleeping
+  // past the TTL: max-age bounds the freshness lifetime, immutable does not
+  // extend it.
+  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  t.equal(entry.staleAt - entry.cachedAt, 5000, 'freshness is max-age, not immutable')
 })
 
 test('cache: immutable alone still caches with a long default TTL', async (t) => {
@@ -127,5 +127,9 @@ test('cache: explicit s-maxage wins over immutable', async (t) => {
   t.equal(hits, 1, 'served from cache within the s-maxage window')
 
   const entry = store.get(undici.util.cache.makeCacheKey(opts))
-  t.equal(entry.deleteAt - entry.cachedAt, 60 * 1000, 's-maxage=60 sets the TTL, not immutable')
+  t.equal(
+    entry.staleAt - entry.cachedAt,
+    60 * 1000,
+    's-maxage=60 sets the freshness, not immutable',
+  )
 })

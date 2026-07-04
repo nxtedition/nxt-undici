@@ -439,13 +439,14 @@ test('cache: only-if-cached returns cached entry when one exists', async (t) => 
 // Authorization header
 // ---------------------------------------------------------------------------
 
-test('cache: authorization header prevents caching unless response has public directive', async (t) => {
+test('cache: authorization header prevents caching unless response permits it (public/s-maxage/must-revalidate)', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // s-maxage but no 'public' — should not be cached when request has authorization
-    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    // max-age only — RFC 9111 §3.5 requires public, s-maxage or
+    // must-revalidate for a shared cache to store an authorized response.
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
     res.end('private')
   })
   t.teardown(server.close.bind(server))
@@ -495,11 +496,13 @@ test('cache: authorization header allows caching when response has public direct
 // Response directives that prevent caching
 // ---------------------------------------------------------------------------
 
-test('cache: must-revalidate response directive prevents caching', async (t) => {
+test('cache: must-revalidate response is stored and served while fresh', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
+    // must-revalidate only constrains STALE reuse (RFC 9111 §5.2.2.2); a
+    // fresh entry serves normally.
     res.writeHead(200, { 'cache-control': 's-maxage=60, must-revalidate' })
     res.end('body')
   })
@@ -517,10 +520,10 @@ test('cache: must-revalidate response directive prevents caching', async (t) => 
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'must-revalidate responses are not cached')
+  t.equal(hits, 1, 'must-revalidate response is served from cache while fresh')
 })
 
-test('cache: proxy-revalidate response directive prevents caching', async (t) => {
+test('cache: proxy-revalidate response is stored and served while fresh', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
@@ -542,14 +545,22 @@ test('cache: proxy-revalidate response directive prevents caching', async (t) =>
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'proxy-revalidate responses are not cached')
+  t.equal(hits, 1, 'proxy-revalidate response is served from cache while fresh')
 })
 
-test('cache: no-cache response directive prevents caching', async (t) => {
-  t.plan(1)
+test('cache: no-cache response directive forces origin validation on every reuse', async (t) => {
+  t.plan(2)
   let hits = 0
+  let conditional = 0
   const server = await startServer((req, res) => {
     hits++
+    // Unqualified no-cache: the response may be stored, but must be
+    // validated with the origin before every reuse (RFC 9111 §5.2.2.4). This
+    // origin never answers 304, so every request pays a full round-trip —
+    // but the second one must arrive as a conditional request.
+    if (req.headers['if-modified-since']) {
+      conditional++
+    }
     res.writeHead(200, { 'cache-control': 'max-age=60, no-cache' })
     res.end('body')
   })
@@ -567,7 +578,8 @@ test('cache: no-cache response directive prevents caching', async (t) => {
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'no-cache responses are not cached')
+  t.equal(hits, 2, 'every reuse goes to the origin')
+  t.equal(conditional, 1, 'the reuse validated instead of serving from cache')
 })
 
 // ---------------------------------------------------------------------------
@@ -1802,8 +1814,10 @@ test('cache: authorized request not cached without public directive', async (t) 
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
+    // max-age only — does not permit shared-cache storage of an authorized
+    // response (s-maxage/public/must-revalidate would, RFC 9111 §3.5).
     res.writeHead(200, {
-      'cache-control': 's-maxage=60',
+      'cache-control': 'max-age=60',
       'content-type': 'text/plain',
     })
     res.end('secret')
@@ -1963,9 +1977,10 @@ test('cache: cached non-public response is not served to request with Authorizat
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // First request has no Authorization, so response gets cached.
-    // Response has no 'public' directive.
-    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    // First request has no Authorization, so response gets cached. Response
+    // has no directive permitting authorized reuse (max-age doesn't count;
+    // public/s-maxage/must-revalidate would).
+    res.writeHead(200, { 'cache-control': 'max-age=60', 'content-type': 'text/plain' })
     res.end('data')
   })
   t.teardown(server.close.bind(server))

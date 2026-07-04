@@ -91,12 +91,12 @@ test('cache: request max-age=0 bypasses cache lookup', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// 'min-fresh' / 'max-stale' are not recognised by cache-control-parser, so the
-// old directive checks were dead code and the cache served entries anyway.
+// 'min-fresh' / 'max-stale' are evaluated locally against the entry's
+// freshness (RFC 9111 §5.2.1.3 / §5.2.1.2) instead of bypassing the cache.
 // ---------------------------------------------------------------------------
 
-test('cache: request min-fresh bypasses cache lookup', async (t) => {
-  t.plan(1)
+test('cache: request min-fresh is evaluated against the entry freshness', async (t) => {
+  t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
@@ -115,11 +115,16 @@ test('cache: request min-fresh bypasses cache lookup', async (t) => {
   }
 
   await rawRequest(dispatch, { ...base, headers: {} })
+  // ~60s of freshness left — comfortably more than 30s.
   await rawRequest(dispatch, { ...base, headers: { 'cache-control': 'min-fresh=30' } })
-  t.equal(hits, 2, 'min-fresh must go to the origin until the directive is supported')
+  t.equal(hits, 1, 'entry fresh for longer than min-fresh is served from cache')
+
+  // Demands more remaining freshness than the entry can have — origin.
+  await rawRequest(dispatch, { ...base, headers: { 'cache-control': 'min-fresh=120' } })
+  t.equal(hits, 2, 'entry with less remaining freshness than min-fresh goes to origin')
 })
 
-test('cache: request max-stale bypasses cache lookup', async (t) => {
+test('cache: request max-stale still serves a fresh entry', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
@@ -140,7 +145,7 @@ test('cache: request max-stale bypasses cache lookup', async (t) => {
 
   await rawRequest(dispatch, { ...base, headers: {} })
   await rawRequest(dispatch, { ...base, headers: { 'cache-control': 'max-stale=30' } })
-  t.equal(hits, 2, 'max-stale must go to the origin until the directive is supported')
+  t.equal(hits, 1, 'a fresh entry satisfies a max-stale request')
 })
 
 // ---------------------------------------------------------------------------

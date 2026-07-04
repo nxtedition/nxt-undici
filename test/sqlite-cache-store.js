@@ -22,6 +22,7 @@ function makeValue(overrides = {}) {
     statusCode: 200,
     statusMessage: 'OK',
     cachedAt: now,
+    staleAt: now + 3600e3,
     deleteAt: now + 7200e3,
     ...overrides,
   }

@@ -40,6 +40,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve))
 // when SqliteCacheStore provides it.
 const HAS_DELETE = typeof SqliteShardedCacheStore.prototype.delete === 'function'
 
+// Opens a store and registers a teardown so it is always closed, even if an
+// assertion throws before a test reaches its explicit close(). close() is
+// idempotent, so a redundant teardown close after an explicit one is a no-op.
+function openStore(t, opts) {
+  const store = new SqliteShardedCacheStore(opts)
+  t.teardown(() => store.close())
+  return store
+}
+
 function makeTmpLocation(t, name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `sharded-cache-${name}-`))
   t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }))
@@ -75,16 +84,13 @@ function shardFiles(location, shards) {
 // ---------------------------------------------------------------------------
 
 test('defaults to 4 shards, custom shard count is respected', (t) => {
-  const a = new SqliteShardedCacheStore()
-  t.teardown(() => a.close())
+  const a = openStore(t)
   t.equal(a.shards, 4, 'default shard count is 4')
 
-  const b = new SqliteShardedCacheStore({ shards: 2 })
-  t.teardown(() => b.close())
+  const b = openStore(t, { shards: 2 })
   t.equal(b.shards, 2, 'custom shard count')
 
-  const c = new SqliteShardedCacheStore({ shards: 1 })
-  t.teardown(() => c.close())
+  const c = openStore(t, { shards: 1 })
   t.equal(c.shards, 1, 'single shard degenerates to a plain store')
   t.end()
 })
@@ -94,15 +100,13 @@ test('invalid shards option throws TypeError', (t) => {
     t.throws(() => new SqliteShardedCacheStore({ shards }), TypeError, `shards=${shards} rejected`)
   }
   // Nullish means "use the default", matching the other store options.
-  const store = new SqliteShardedCacheStore({ shards: null })
-  t.teardown(() => store.close())
+  const store = openStore(t, { shards: null })
   t.equal(store.shards, 4, 'shards=null falls back to the default')
   t.end()
 })
 
 test('invalid cache key throws TypeError before touching any shard', (t) => {
-  const store = new SqliteShardedCacheStore()
-  t.teardown(() => store.close())
+  const store = openStore(t)
 
   t.throws(() => store.get(null), TypeError, 'null key')
   t.throws(() => store.get({ origin: 'https://x.com', method: 'GET' }), TypeError, 'missing path')
@@ -113,13 +117,19 @@ test('invalid cache key throws TypeError before touching any shard', (t) => {
   t.end()
 })
 
+test('close() is idempotent', (t) => {
+  const store = openStore(t, { shards: 3 })
+  store.close()
+  t.doesNotThrow(() => store.close(), 'second close() is a no-op')
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Basic semantics through the shard router
 // ---------------------------------------------------------------------------
 
 test('basic set/get round-trip across many keys (memory)', async (t) => {
-  const store = new SqliteShardedCacheStore()
-  t.teardown(() => store.close())
+  const store = openStore(t)
 
   const now = Date.now()
   for (let i = 0; i < 16; i++) {
@@ -141,8 +151,7 @@ test('basic set/get round-trip across many keys (memory)', async (t) => {
 })
 
 test('vary matching passes through the router', async (t) => {
-  const store = new SqliteShardedCacheStore()
-  t.teardown(() => store.close())
+  const store = openStore(t)
 
   store.set(
     makeKey({ path: '/vary', headers: { 'accept-encoding': 'gzip' } }),
@@ -166,8 +175,7 @@ test(
   'delete removes only its URL (pending batch and database)',
   { skip: HAS_DELETE ? false : 'SqliteCacheStore has no delete() on this base' },
   async (t) => {
-    const store = new SqliteShardedCacheStore()
-    t.teardown(() => store.close())
+    const store = openStore(t)
 
     // Pending-batch case: delete before the flush has happened.
     store.set(makeKey({ path: '/del-pending' }), makeValue())
@@ -193,7 +201,7 @@ test(
 
 test('creates one database file per shard and spreads keys across all of them', async (t) => {
   const location = makeTmpLocation(t, 'spread')
-  const store = new SqliteShardedCacheStore({ location, shards: 4 })
+  const store = openStore(t, { location, shards: 4 })
 
   for (let i = 0; i < 64; i++) {
     store.set(makeKey({ path: `/spread-${i}` }), makeValue())
@@ -221,7 +229,7 @@ test('creates one database file per shard and spreads keys across all of them', 
 test('URL routing is deterministic across store instances (same location, same shards)', async (t) => {
   const location = makeTmpLocation(t, 'stable')
 
-  const writer = new SqliteShardedCacheStore({ location, shards: 4 })
+  const writer = openStore(t, { location, shards: 4 })
   for (let i = 0; i < 32; i++) {
     writer.set(
       makeKey({ path: `/stable-${i}` }),
@@ -233,8 +241,7 @@ test('URL routing is deterministic across store instances (same location, same s
 
   // A fresh instance — as another process would — must route every URL to the
   // shard the writer picked.
-  const reader = new SqliteShardedCacheStore({ location, shards: 4 })
-  t.teardown(() => reader.close())
+  const reader = openStore(t, { location, shards: 4 })
   for (let i = 0; i < 32; i++) {
     const result = reader.get(makeKey({ path: `/stable-${i}` }))
     t.ok(result, `key ${i} found by second instance`)
@@ -246,7 +253,7 @@ test('URL routing is deterministic across store instances (same location, same s
 test('changing the shard count uses a fresh, disjoint set of files', async (t) => {
   const location = makeTmpLocation(t, 'recount')
 
-  const four = new SqliteShardedCacheStore({ location, shards: 4 })
+  const four = openStore(t, { location, shards: 4 })
   for (let i = 0; i < 8; i++) {
     four.set(makeKey({ path: `/recount-${i}` }), makeValue())
   }
@@ -256,8 +263,7 @@ test('changing the shard count uses a fresh, disjoint set of files', async (t) =
   // A different count must not read rows placed under an incompatible
   // URL→shard mapping — the count is part of the filename, so it starts
   // from an empty, disjoint file set.
-  const two = new SqliteShardedCacheStore({ location, shards: 2 })
-  t.teardown(() => two.close())
+  const two = openStore(t, { location, shards: 2 })
   for (let i = 0; i < 8; i++) {
     t.equal(
       two.get(makeKey({ path: `/recount-${i}` })),
@@ -279,7 +285,7 @@ test('changing the shard count uses a fresh, disjoint set of files', async (t) =
 test('close() drains pending batches of every shard', async (t) => {
   const location = makeTmpLocation(t, 'drain')
 
-  const store = new SqliteShardedCacheStore({ location, shards: 4 })
+  const store = openStore(t, { location, shards: 4 })
   for (let i = 0; i < 16; i++) {
     store.set(makeKey({ path: `/drain-${i}` }), makeValue())
   }
@@ -293,8 +299,7 @@ test('close() drains pending batches of every shard', async (t) => {
 
 test('clear() empties every shard', async (t) => {
   const location = makeTmpLocation(t, 'clear')
-  const store = new SqliteShardedCacheStore({ location, shards: 4 })
-  t.teardown(() => store.close())
+  const store = openStore(t, { location, shards: 4 })
 
   for (let i = 0; i < 16; i++) {
     store.set(makeKey({ path: `/clear-${i}` }), makeValue())
@@ -312,8 +317,7 @@ test('clear() empties every shard', async (t) => {
 
 test('gc() removes expired entries from every shard', async (t) => {
   const location = makeTmpLocation(t, 'gc')
-  const store = new SqliteShardedCacheStore({ location, shards: 4 })
-  t.teardown(() => store.close())
+  const store = openStore(t, { location, shards: 4 })
 
   const now = Date.now()
   for (let i = 0; i < 16; i++) {
@@ -346,8 +350,7 @@ test('gc() removes expired entries from every shard', async (t) => {
 })
 
 test('nxt:clearCache broadcast reaches all shards', async (t) => {
-  const store = new SqliteShardedCacheStore()
-  t.teardown(() => store.close())
+  const store = openStore(t)
 
   for (let i = 0; i < 8; i++) {
     store.set(makeKey({ path: `/bc-${i}` }), makeValue())
@@ -387,8 +390,7 @@ test('cache interceptor serves second request from a sharded store', async (t) =
   await once(server, 'listening')
   t.teardown(server.close.bind(server))
 
-  const store = new SqliteShardedCacheStore()
-  t.teardown(() => store.close())
+  const store = openStore(t)
   const dispatch = compose(new undici.Agent(), interceptors.cache())
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,

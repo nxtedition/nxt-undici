@@ -329,10 +329,35 @@ export const interceptors: {
 
 export const cache: {
   SqliteCacheStore: typeof SqliteCacheStore
+  SqliteShardedCacheStore: typeof SqliteShardedCacheStore
 }
 
 export class SqliteCacheStore implements CacheStore {
   constructor(opts?: { location?: string; db?: Record<string, unknown>; maxSize?: number })
+  get(key: CacheKey): CacheGetResult | undefined
+  set(
+    key: CacheKey,
+    value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
+  ): void
+  gc(): void
+  clear(): void
+  close(): void
+}
+
+/**
+ * Shards a SqliteCacheStore across `shards` (default 4) SQLite databases by
+ * URL hash — stored as `<location>.<index>-<count>` — so concurrent writers
+ * sharing an on-disk cache contend per shard instead of on a single write
+ * lock. `maxSize` is the total budget, divided evenly across the shards.
+ */
+export class SqliteShardedCacheStore implements CacheStore {
+  constructor(opts?: {
+    location?: string
+    shards?: number
+    db?: Record<string, unknown>
+    maxSize?: number
+  })
+  readonly shards: number
   get(key: CacheKey): CacheGetResult | undefined
   set(
     key: CacheKey,

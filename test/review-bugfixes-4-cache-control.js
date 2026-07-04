@@ -91,6 +91,25 @@ test('parseCacheControl - valueless directive with explicit = is an invalid qual
   t.end()
 })
 
+test('parseCacheControl - unquoted private/no-cache value fails restrictive (unqualified)', (t) => {
+  t.strictSame(
+    parseCacheControl('private=set-cookie'),
+    { private: true },
+    'unquoted private value treated as unqualified private, not a field list',
+  )
+  t.strictSame(
+    parseCacheControl('no-cache=set-cookie'),
+    { 'no-cache': true },
+    'unquoted no-cache value treated as unqualified no-cache',
+  )
+  t.strictSame(
+    parseCacheControl('private="set-cookie"'),
+    { private: ['set-cookie'] },
+    'the quoted field-list form is still honored',
+  )
+  t.end()
+})
+
 test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
   t.strictSame(
     parseCacheControl('max-age=60junk'),

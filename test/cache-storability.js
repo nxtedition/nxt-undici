@@ -192,6 +192,60 @@ test('storability: malformed Age header is ignored, not coerced', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
+// Write-back on request-directive bypass (undici PR #5510): a request
+// directive constrains reuse for THIS request, not storage of the fresh
+// origin response for later callers.
+// ---------------------------------------------------------------------------
+
+test('write-back: a no-cache request on a cold cache still stores for later callers', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    res.end('body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), path: '/', method: 'GET', cache: { store } }
+
+  // First request carries a bypass directive on an empty cache.
+  await rawRequest(dispatch, { ...base, headers: { 'cache-control': 'no-cache' } })
+  t.equal(hits, 1, 'no-cache request went to the origin')
+  await flush()
+
+  // A subsequent plain request is served from the entry the bypass stored.
+  await rawRequest(dispatch, { ...base, headers: {} })
+  t.equal(hits, 1, 'fresh response was written back despite the request no-cache')
+})
+
+test('write-back: request no-store on a bypass does not store', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    res.end('body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), path: '/', method: 'GET', cache: { store } }
+
+  // no-store forbids storing this request's response...
+  await rawRequest(dispatch, { ...base, headers: { 'cache-control': 'no-store' } })
+  t.equal(hits, 1)
+  await flush()
+
+  // ...so a plain follow-up must hit the origin again.
+  await rawRequest(dispatch, { ...base, headers: {} })
+  t.equal(hits, 2, 'no-store bypass did not write back')
+})
+
+// ---------------------------------------------------------------------------
 // RFC 9111 §3.5: authorization permits
 // ---------------------------------------------------------------------------
 

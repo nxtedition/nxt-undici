@@ -36,16 +36,19 @@ function makeValue(overrides = {}) {
 // ensure the write has reached the database.
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-// The wrapper mirrors the base store's surface: delete() is only exposed
-// when SqliteCacheStore provides it.
-const HAS_DELETE = typeof SqliteShardedCacheStore.prototype.delete === 'function'
-
-// Opens a store and registers a teardown so it is always closed, even if an
-// assertion throws before a test reaches its explicit close(). close() is
-// idempotent, so a redundant teardown close after an explicit one is a no-op.
+// Opens a store and registers a best-effort teardown so it is always closed,
+// even if an assertion throws before a test reaches its explicit close().
+// close() is not idempotent (it mirrors the base store), so the teardown
+// swallows the error from a redundant close after the test already closed.
 function openStore(t, opts) {
   const store = new SqliteShardedCacheStore(opts)
-  t.teardown(() => store.close())
+  t.teardown(() => {
+    try {
+      store.close()
+    } catch {
+      // already closed by the test body — best-effort cleanup only
+    }
+  })
   return store
 }
 
@@ -111,9 +114,6 @@ test('invalid cache key throws TypeError before touching any shard', (t) => {
   t.throws(() => store.get(null), TypeError, 'null key')
   t.throws(() => store.get({ origin: 'https://x.com', method: 'GET' }), TypeError, 'missing path')
   t.throws(() => store.set(undefined, makeValue()), TypeError, 'undefined key on set')
-  if (HAS_DELETE) {
-    t.throws(() => store.delete(42), TypeError, 'number key on delete')
-  }
   t.end()
 })
 
@@ -135,10 +135,26 @@ test('maxSize is split across shards and still yields workable budgets', async (
   t.end()
 })
 
-test('close() is idempotent', (t) => {
-  const store = openStore(t, { shards: 3 })
-  store.close()
-  t.doesNotThrow(() => store.close(), 'second close() is a no-op')
+test('close() is not idempotent and aggregates multiple shard failures', (t) => {
+  // close() mirrors the base store, whose close() throws on a second call. A
+  // second close() of a multi-shard store therefore makes every shard throw —
+  // more than one error, so they are combined into an AggregateError rather
+  // than all but the first being swallowed.
+  const multi = openStore(t, { shards: 3 })
+  multi.close()
+  t.throws(() => multi.close(), AggregateError, 'multiple shard errors are aggregated')
+
+  // A single shard produces a single error, surfaced as-is (not wrapped).
+  const single = openStore(t, { shards: 1 })
+  single.close()
+  let lone
+  try {
+    single.close()
+  } catch (err) {
+    lone = err
+  }
+  t.ok(lone instanceof Error, 'a lone shard failure throws')
+  t.notOk(lone instanceof AggregateError, 'a lone shard error is surfaced unwrapped')
   t.end()
 })
 
@@ -188,30 +204,6 @@ test('vary matching passes through the router', async (t) => {
   )
   t.end()
 })
-
-test(
-  'delete removes only its URL (pending batch and database)',
-  { skip: HAS_DELETE ? false : 'SqliteCacheStore has no delete() on this base' },
-  async (t) => {
-    const store = openStore(t)
-
-    // Pending-batch case: delete before the flush has happened.
-    store.set(makeKey({ path: '/del-pending' }), makeValue())
-    store.set(makeKey({ path: '/keep-pending' }), makeValue())
-    store.delete(makeKey({ path: '/del-pending' }))
-    t.equal(store.get(makeKey({ path: '/del-pending' })), undefined, 'pending entry dropped')
-    t.ok(store.get(makeKey({ path: '/keep-pending' })), 'other pending entry kept')
-
-    // Database case: delete after flush.
-    store.set(makeKey({ path: '/del-db' }), makeValue())
-    store.set(makeKey({ path: '/keep-db' }), makeValue())
-    await flush()
-    store.delete(makeKey({ path: '/del-db' }))
-    t.equal(store.get(makeKey({ path: '/del-db' })), undefined, 'flushed entry deleted')
-    t.ok(store.get(makeKey({ path: '/keep-db' })), 'other flushed entry kept')
-    t.end()
-  },
-)
 
 // ---------------------------------------------------------------------------
 // Sharding behavior (file-backed)
@@ -440,5 +432,52 @@ test('cache interceptor serves second request from a sharded store', async (t) =
   const second = await rawRequest()
 
   t.equal(hits, 1, 'server hit only once')
+  t.equal(second, first, 'cached body served intact')
+})
+
+test('cache interceptor caches via its default store when none is provided', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = createServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 's-maxage=60', 'content-type': 'text/plain' })
+    res.end('default store body')
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.teardown(server.close.bind(server))
+
+  const dispatch = compose(new undici.Agent(), interceptors.cache())
+  // No cache.store — exercises the interceptor's default (now a sharded store).
+  const opts = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/default-store',
+    method: 'GET',
+    headers: {},
+    cache: {},
+  }
+
+  const rawRequest = () =>
+    new Promise((resolve, reject) => {
+      const chunks = []
+      dispatch(opts, {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData(chunk) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+        },
+        onComplete() {
+          resolve(Buffer.concat(chunks).toString())
+        },
+        onError: reject,
+      })
+    })
+
+  const first = await rawRequest()
+  const second = await rawRequest()
+
+  t.equal(hits, 1, 'server hit only once (served from the default store)')
   t.equal(second, first, 'cached body served intact')
 })

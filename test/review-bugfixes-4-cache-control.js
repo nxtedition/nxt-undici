@@ -110,6 +110,18 @@ test('parseCacheControl - unquoted private/no-cache value fails restrictive (unq
   t.end()
 })
 
+test('parseCacheControl - whitespace around a delta-seconds value is tolerated (BWS/OWS)', (t) => {
+  t.strictSame(parseCacheControl('max-age= 60'), { 'max-age': 60 }, 'space after = tolerated')
+  t.strictSame(parseCacheControl('max-age=60 '), { 'max-age': 60 }, 'trailing space tolerated')
+  t.strictSame(
+    parseCacheControl('s-maxage= "60"'),
+    { 's-maxage': 60 },
+    'space before a quoted value tolerated',
+  )
+  t.strictSame(parseCacheControl('max-age= 60junk'), {}, 'garbage after trim still dropped')
+  t.end()
+})
+
 test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
   t.strictSame(
     parseCacheControl('max-age=60junk'),

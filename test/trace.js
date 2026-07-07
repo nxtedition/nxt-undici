@@ -2,6 +2,12 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { request, Agent } from '../lib/index.js'
+import { installTrace } from '../lib/trace.js'
+
+// The per-thread default writer slot (the legacy __nxt_lib_trace var is
+// deprecated). Reads may go through the slot; installs must go through
+// installTrace so the package's module-local mirror updates synchronously.
+const kTrace = Symbol.for('@nxtedition/app/trace')
 
 async function startServer(handler) {
   const server = createServer(handler ?? ((req, res) => res.end('hello')))
@@ -171,10 +177,12 @@ test('trace: null disables despite global writer', async (t) => {
   t.teardown(server.close.bind(server))
 
   const writer = makeWriter()
-  const prev = globalThis.__nxt_lib_trace
-  globalThis.__nxt_lib_trace = writer
+  // installTrace (not a bare slot assignment): the package mirrors the slot
+  // module-locally and only installTrace updates it synchronously.
+  const prev = globalThis[kTrace]
+  installTrace(writer)
   t.teardown(() => {
-    globalThis.__nxt_lib_trace = prev
+    installTrace(prev)
   })
 
   const { body, statusCode } = await request(`http://127.0.0.1:${server.address().port}`, {
@@ -188,7 +196,7 @@ test('trace: null disables despite global writer', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// global fallback: absent option uses globalThis.__nxt_lib_trace
+// global fallback: absent option uses the installed per-thread writer
 // ---------------------------------------------------------------------------
 
 test('trace: global fallback used when option absent', async (t) => {
@@ -196,10 +204,10 @@ test('trace: global fallback used when option absent', async (t) => {
   t.teardown(server.close.bind(server))
 
   const writer = makeWriter()
-  const prev = globalThis.__nxt_lib_trace
-  globalThis.__nxt_lib_trace = writer
+  const prev = globalThis[kTrace]
+  installTrace(writer)
   t.teardown(() => {
-    globalThis.__nxt_lib_trace = prev
+    installTrace(prev)
   })
 
   const { body, statusCode } = await request(`http://127.0.0.1:${server.address().port}`, {
@@ -223,10 +231,10 @@ test('trace: { write: null } is inert', async (t) => {
   t.teardown(server.close.bind(server))
 
   const globalWriter = makeWriter()
-  const prev = globalThis.__nxt_lib_trace
-  globalThis.__nxt_lib_trace = globalWriter
+  const prev = globalThis[kTrace]
+  installTrace(globalWriter)
   t.teardown(() => {
-    globalThis.__nxt_lib_trace = prev
+    installTrace(prev)
   })
 
   const { body, statusCode } = await request(`http://127.0.0.1:${server.address().port}`, {

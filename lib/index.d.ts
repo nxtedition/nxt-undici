@@ -57,8 +57,8 @@ export interface LoggerLike {
 
 /** The @nxtedition/trace writer contract: `write` is the emit fn while tracing
  *  is enabled and null while disabled (it flips between the two at runtime).
- *  The package also declares the per-thread `globalThis.__nxt_lib_trace`
- *  fallback slot. */
+ *  The per-thread fallback writer lives in the Symbol.for('@nxtedition/app/trace')
+ *  slot and must be installed via the package's installTrace(). */
 export type { TraceWriter } from '@nxtedition/trace'
 import type { TraceWriter } from '@nxtedition/trace'
 
@@ -106,8 +106,8 @@ export interface DispatchOptions {
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
   /** Per-request trace writer: undefined falls back to the per-thread writer
-   *  installed at globalThis.__nxt_lib_trace, null disables tracing for this
-   *  request. */
+   *  installed via @nxtedition/trace's installTrace(), null disables tracing
+   *  for this request. */
   trace?: TraceWriter | null
   dns?: DnsOptions | boolean | null
   connect?: Record<string, unknown> | null

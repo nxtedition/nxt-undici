@@ -10,6 +10,7 @@
   ],
   "dependencies": {
     "@nxtedition/scheduler": "^4.1.1",
+    "@nxtedition/trace": "^1.0.0",
     "@nxtedition/undici": "^11.1.4",
     "fast-querystring": "^1.1.2",
     "http-errors": "^2.0.1",

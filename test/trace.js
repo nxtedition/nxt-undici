@@ -283,3 +283,83 @@ test('trace: invalid trace option rejects with InvalidArgumentError', async (t) 
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// upgrade path: end doc emitted when the upgraded socket closes
+// ---------------------------------------------------------------------------
+
+test('trace: upgrade emits end doc on socket close, bytes null', async (t) => {
+  const { interceptors } = await import('../lib/index.js')
+  const { EventEmitter } = await import('node:events')
+
+  const writer = makeWriter()
+  const socket = new EventEmitter()
+
+  // Unit-level: drive the log interceptor's handler directly with an upgrade
+  // so the pairing is asserted without a WebSocket server.
+  const inner = (opts, handler) => {
+    handler.onUpgrade(101, [], socket)
+    return true
+  }
+  const dispatch = interceptors.log()(inner)
+  dispatch(
+    { origin: 'http://example.com', path: '/ws', method: 'GET', id: 'req-up', trace: writer },
+    {
+      onUpgrade() {},
+    },
+  )
+
+  t.equal(writer.docs.length, 1, 'only the start doc before the socket closes')
+  t.match(writer.docs[0], { op: 'undici:request', phase: 'start', id: 'req-up' })
+
+  socket.emit('close')
+
+  t.equal(writer.docs.length, 2, 'end doc emitted on socket close')
+  t.match(writer.docs[1], {
+    op: 'undici:request',
+    phase: 'end',
+    id: 'req-up',
+    statusCode: 101,
+    bytes: null,
+    err: null,
+  })
+  t.equal(typeof writer.docs[1].durationMs, 'number')
+
+  socket.emit('close')
+  t.equal(writer.docs.length, 2, 'a second close does not double-emit')
+})
+
+// ---------------------------------------------------------------------------
+// sync dispatch throw: start doc is still paired with an end doc
+// ---------------------------------------------------------------------------
+
+test('trace: sync dispatch throw pairs the start doc with an err end doc', async (t) => {
+  const { interceptors } = await import('../lib/index.js')
+
+  const writer = makeWriter()
+  const boom = Object.assign(new Error('boom'), { code: 'EBOOM' })
+
+  const dispatch = interceptors.log()(() => {
+    throw boom
+  })
+
+  t.throws(
+    () =>
+      dispatch(
+        { origin: 'http://example.com', path: '/', method: 'GET', id: 'req-sync', trace: writer },
+        {},
+      ),
+    boom,
+    'the dispatch error is rethrown to outer interceptors',
+  )
+
+  t.equal(writer.docs.length, 2, 'start and end docs both emitted')
+  t.match(writer.docs[0], { op: 'undici:request', phase: 'start', id: 'req-sync' })
+  t.match(writer.docs[1], {
+    op: 'undici:request',
+    phase: 'end',
+    id: 'req-sync',
+    statusCode: null,
+    err: 'EBOOM',
+  })
+})

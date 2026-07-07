@@ -55,6 +55,18 @@ export interface LoggerLike {
   info(obj: unknown, msg?: string): void
 }
 
+/** The @nxtedition/trace writer contract, implemented structurally here (see
+ *  lib/trace.js — depending on @nxtedition/trace would create a publish-order
+ *  cycle): `write` is the emit fn while tracing is enabled and null while
+ *  disabled (it flips between the two at runtime). */
+export interface TraceWriter {
+  write: ((obj: object, op: string) => void) | null
+}
+
+declare global {
+  var __nxt_lib_trace: TraceWriter | undefined
+}
+
 export type BodyFactoryResult =
   | Readable
   | Uint8Array
@@ -98,6 +110,10 @@ export interface DispatchOptions {
   error?: boolean | null
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
+  /** Per-request trace writer: undefined falls back to the per-thread writer
+   *  installed at globalThis.__nxt_lib_trace, null disables tracing for this
+   *  request. */
+  trace?: TraceWriter | null
   dns?: DnsOptions | boolean | null
   connect?: Record<string, unknown> | null
   priority?: Priority | null
@@ -334,6 +350,7 @@ export const interceptors: {
   proxy: () => Interceptor
   cache: () => Interceptor
   requestId: () => Interceptor
+  trace: () => Interceptor
   dns: () => Interceptor
   lookup: () => Interceptor
   priority: () => Interceptor

@@ -195,3 +195,86 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
   const starts = writer.docs.filter((d) => d.op === 'undici:request' && d.phase === 'start')
   t.equal(refresh.id, starts[1].id, 'attributed to the request that triggered the refresh')
 })
+
+// ---------------------------------------------------------------------------
+// deduped refresh → one doc per actual lookup, not per triggering request
+// ---------------------------------------------------------------------------
+
+test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t) => {
+  const server = await startServer()
+  t.teardown(server.close.bind(server))
+  const port = server.address().port
+
+  // Same coarse-tick window trick as the refresh test above (bounded retries
+  // absorb a fastNow tick slipping between requests). The refresh lookup
+  // hangs until released so both triggering requests provably share ONE
+  // in-flight resolution; a tick-slip miss also awaits it, so the release is
+  // timer-driven rather than awaited behind the requests (no deadlock).
+  let done = false
+  for (let attempt = 0; attempt < 5 && !done; attempt++) {
+    const writer = makeWriter()
+    const dispatcher = makeDispatcher(t)
+
+    let lookups = 0
+    let release = null
+    const lookup = (hostname, opts, cb) => {
+      lookups++
+      if (lookups === 1) {
+        cb(null, [{ address: '127.0.0.1' }])
+      } else {
+        release = () => cb(null, [{ address: '127.0.0.1' }])
+      }
+    }
+
+    const first = await request(`http://localhost:${port}`, {
+      trace: writer,
+      dns: { ttl: 1, lookup },
+      dispatcher,
+    })
+    await first.body.dump()
+
+    const pa = request(`http://localhost:${port}`, {
+      trace: writer,
+      dns: { ttl: 1000, lookup },
+      dispatcher,
+    })
+    const pb = request(`http://localhost:${port}`, {
+      trace: writer,
+      dns: { ttl: 1000, lookup },
+      dispatcher,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    release?.()
+    for (const p of await Promise.all([pa, pb])) {
+      await p.body.dump()
+    }
+
+    // Valid window: both follow-ups stayed on the cached-records path (one
+    // miss doc total, from the first request) and exactly one refresh lookup
+    // actually fired.
+    const misses = writer.docs.filter((d) => d.op === 'undici:dns' && d.source === 'miss')
+    if (misses.length !== 1 || lookups !== 2) {
+      continue
+    }
+
+    // The side-observer settles on a microtask; poll briefly, bounded.
+    const deadline = Date.now() + 1000
+    let refreshes = []
+    while (refreshes.length === 0 && Date.now() < deadline) {
+      refreshes = writer.docs.filter((d) => d.op === 'undici:dns' && d.source === 'refresh')
+      if (refreshes.length === 0) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+    // Settle any stragglers before counting.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    refreshes = writer.docs.filter((d) => d.op === 'undici:dns' && d.source === 'refresh')
+
+    t.equal(refreshes.length, 1, 'one refresh doc per deduped lookup')
+    t.equal(refreshes[0].records, 1)
+    t.equal(refreshes[0].err, null)
+    done = true
+  }
+
+  t.ok(done, 'deterministic refresh window achieved within bounded attempts')
+})

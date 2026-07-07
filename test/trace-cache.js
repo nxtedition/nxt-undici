@@ -1,7 +1,7 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { request, Agent, SqliteCacheStore } from '../lib/index.js'
+import { request, Agent, SqliteCacheStore, interceptors } from '../lib/index.js'
 
 async function startServer(handler) {
   const server = createServer(handler)
@@ -189,4 +189,127 @@ test('trace-cache: POST to a cached URL emits cache-invalidate doc', async (t) =
   t.equal(invalidated.statusCode, 200)
   t.ok(invalidated.paths >= 1)
   t.equal(invalidated.err, null)
+})
+
+// ---------------------------------------------------------------------------
+// only-if-cached against a cold cache → the synthetic 504 is a miss, not a hit
+// ---------------------------------------------------------------------------
+
+test('trace-cache: only-if-cached 504 is a miss with reason only-if-cached', async (t) => {
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+
+  // No server: only-if-cached forbids going to origin, so the cache answers
+  // with a synthetic 504 (RFC 9111 §5.2.1.7) without dispatching.
+  const { body, statusCode } = await request('http://127.0.0.1:1', {
+    trace: writer,
+    cache: { store },
+    error: false,
+    headers: { 'cache-control': 'only-if-cached' },
+    dispatcher: makeDispatcher(t),
+  })
+  await body.dump()
+  t.equal(statusCode, 504)
+
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+
+  const [doc] = lookups
+  t.equal(doc.result, 'miss', 'the cache could not satisfy the request')
+  t.equal(doc.reason, 'only-if-cached')
+  t.equal(doc.statusCode, 504)
+  t.equal(doc.ageSec, null)
+
+  t.equal(
+    writer.docs.filter((doc) => doc.op === 'undici:cache-store').length,
+    0,
+    'nothing was dispatched, so nothing passed a storability gate',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// store.set() throws → the cache-store doc must not claim stored: true
+// ---------------------------------------------------------------------------
+
+test('trace-cache: throwing store.set emits stored false with err tag', async (t) => {
+  const server = await startServer((req, res) => {
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('hello')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = {
+    get: () => undefined,
+    set: () => {
+      throw new Error('database is locked')
+    },
+  }
+
+  const { body, statusCode } = await request(`http://127.0.0.1:${server.address().port}`, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+  })
+  t.equal(await body.text(), 'hello')
+  t.equal(statusCode, 200)
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1)
+
+  const [doc] = stores
+  t.equal(doc.stored, false, 'a failed set persisted nothing')
+  t.equal(doc.reason, null, 'a store failure is not a storability gate')
+  t.equal(doc.err, 'database is locked')
+  t.type(doc.sizeBytes, 'number')
+  t.type(doc.ttlSec, 'number')
+})
+
+// ---------------------------------------------------------------------------
+// interim 1xx forwarded by a composed dispatcher → no spurious cache-store doc
+// ---------------------------------------------------------------------------
+
+test('trace-cache: forwarded 1xx emits no cache-store doc', async (t) => {
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+
+  // Raw undici strips interim responses, but composed/mock dispatchers may
+  // forward them (same shape the redirect/response-verify guards exercise).
+  const inner = (opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(103, {}, () => {})
+    handler.onHeaders(200, { 'cache-control': 'max-age=60' }, () => {})
+    handler.onData(Buffer.from('hello'))
+    handler.onComplete({})
+    return true
+  }
+  const dispatch = interceptors.cache()(inner)
+
+  await new Promise((resolve, reject) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        cache: { store },
+        trace: writer,
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {
+          resolve()
+        },
+        onError(err) {
+          reject(err)
+        },
+      },
+    )
+  })
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1, 'exactly one storability outcome per response')
+  t.equal(stores[0].statusCode, 200)
+  t.equal(stores[0].stored, true)
 })

@@ -65,6 +65,38 @@ test('trace lookup: async callback lookup emits one undici:lookup doc', async (t
 })
 
 // ---------------------------------------------------------------------------
+// thenable (promise-returning) lookup → success doc too
+// ---------------------------------------------------------------------------
+
+test('trace lookup: thenable lookup emits one undici:lookup doc', async (t) => {
+  const server = await startServer()
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const target = `http://127.0.0.1:${server.address().port}`
+
+  const { body, statusCode } = await request('http://service.internal', {
+    trace: writer,
+    dispatcher: makeDispatcher(t),
+    lookup: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return target
+    },
+  })
+  await body.dump()
+  t.equal(statusCode, 200)
+
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:lookup')
+  t.equal(lookups.length, 1, 'promise-based lookups trace their successes like async callbacks')
+
+  const [doc] = lookups
+  t.equal(doc.url, 'http://service.internal/')
+  t.equal(doc.resolved, target)
+  t.equal(doc.err, null)
+  t.type(doc.durationMs, 'number')
+})
+
+// ---------------------------------------------------------------------------
 // failing lookup → err doc, resolved null, request rejects
 // ---------------------------------------------------------------------------
 

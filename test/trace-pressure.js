@@ -250,3 +250,30 @@ test('trace-pressure: trace null disables; a mid-episode toggle-on stays silent'
     t.equal(globalWriter.docs.length, 0, 'no orphaned end doc after a toggle-on')
   }
 })
+
+// ---------------------------------------------------------------------------
+// close() mid-episode → engaged episodes are released, not orphaned
+// ---------------------------------------------------------------------------
+
+test('trace-pressure: close releases engaged episodes', async (t) => {
+  const writer = makeWriter()
+  const p = makeInterceptor({ trace: writer })
+  const { dispatch, captured } = capturingDispatch()
+  const wrapped = p(dispatch)
+
+  engageSome(wrapped, captured)
+  await tick(p)
+  t.equal(writer.docs.length, 1, 'start doc on engage')
+  t.match(writer.docs[0], { level: 'some', phase: 'start' })
+
+  // Teardown while the episode is engaged: a monitor close is not a hang, so
+  // the pair must be completed instead of leaving a forever-open start doc.
+  p.close()
+
+  t.equal(writer.docs.length, 2, 'close emitted the end doc')
+  t.match(writer.docs[1], { op: 'undici:pressure', origin: ORIGIN, level: 'some', phase: 'end' })
+  t.type(writer.docs[1].durationMs, 'number')
+
+  p.close()
+  t.equal(writer.docs.length, 2, 'a second close does not double-emit')
+})

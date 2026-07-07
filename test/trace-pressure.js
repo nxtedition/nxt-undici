@@ -3,8 +3,8 @@ import tp from 'node:timers/promises'
 import { interceptors } from '../lib/index.js'
 import { installTrace } from '../lib/trace.js'
 
-// The per-thread default writer slot (the legacy __nxt_lib_trace var is
-// deprecated). Reads may go through the slot; installs must go through
+// The per-thread default writer lives in the Symbol.for slot maintained by
+// @nxtedition/trace. Reads may go through getTrace; installs must go through
 // installTrace so the package's module-local mirror updates synchronously.
 const kTrace = Symbol.for('@nxtedition/app/trace')
 

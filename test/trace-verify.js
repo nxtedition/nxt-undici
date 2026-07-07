@@ -181,6 +181,4 @@ test('trace-verify: overrun emits undici:verify doc with kind overrun', async (t
     method: 'GET',
     url: 'http://example.com/x',
   })
-
-  t.end()
 })

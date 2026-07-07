@@ -131,7 +131,7 @@ test('trace-verify: content-md5 mismatch emits undici:verify doc with kind hash'
 // transport's content-length framing prevents a real server from overrunning)
 // ---------------------------------------------------------------------------
 
-test('trace-verify: overrun emits undici:verify doc with kind overrun', async (t) => {
+test('trace-verify: overrun emits undici:verify doc with kind overrun', (t) => {
   const writer = makeWriter()
 
   let capturedError = null
@@ -181,4 +181,6 @@ test('trace-verify: overrun emits undici:verify doc with kind overrun', async (t
     method: 'GET',
     url: 'http://example.com/x',
   })
+
+  t.end()
 })

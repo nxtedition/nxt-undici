@@ -55,6 +55,13 @@ export interface LoggerLike {
   info(obj: unknown, msg?: string): void
 }
 
+/** The @nxtedition/trace writer contract: `write` is the emit fn while tracing
+ *  is enabled and null while disabled (it flips between the two at runtime).
+ *  The per-thread fallback writer lives in the Symbol.for('@nxtedition/app/trace')
+ *  slot and must be installed via the package's installTrace(). */
+export type { TraceWriter } from '@nxtedition/trace'
+import type { TraceWriter } from '@nxtedition/trace'
+
 export type BodyFactoryResult =
   | Readable
   | Uint8Array
@@ -98,6 +105,10 @@ export interface DispatchOptions {
   error?: boolean | null
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
+  /** Per-request trace writer: undefined falls back to the per-thread writer
+   *  installed via @nxtedition/trace's installTrace(), null disables tracing
+   *  for this request. */
+  trace?: TraceWriter | null
   dns?: DnsOptions | boolean | null
   connect?: Record<string, unknown> | null
   priority?: Priority | null

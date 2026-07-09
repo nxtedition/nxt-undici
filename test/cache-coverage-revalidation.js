@@ -1,5 +1,5 @@
 /* eslint-disable */
-// Coverage for lib/interceptor/cache-revalidation.js edge paths: 1xx interim
+// Coverage for lib/interceptor/cache/revalidation.js edge paths: 1xx interim
 // responses during revalidation, pass-mode error propagation, user aborts
 // mid-revalidation, freshen edge cases (merged no-store/private, qualified
 // field lists, Connection field lists, unusable 304 etags, unstorable times,
@@ -10,7 +10,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
-import { RevalidationHandler, backgroundRefresh } from '../lib/interceptor/cache-revalidation.js'
+import { RevalidationHandler, backgroundRefresh } from '../lib/interceptor/cache/revalidation.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule

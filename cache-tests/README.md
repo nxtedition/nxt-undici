@@ -82,7 +82,7 @@ fork, not bugs:
 - **Range slicing** (`partial-store-*`): stored 206 windows are served only on
   byte-exact window matches; no slicing of wider entries, no suffix
   (`bytes=-N`) or multi-range parsing — those forward to the origin
-  (`lib/interceptor/cache.js` "enable range requests" TODO). The safe half of
+  (`lib/interceptor/cache/index.js` "enable range requests" TODO). The safe half of
   the contract is locked in by `test/cache-range.js`.
 - **Set-Cookie responses are never stored** (`other-set-cookie`,
   `headers-store-Set-Cookie`): shared-cache decision.

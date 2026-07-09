@@ -213,10 +213,16 @@ test('unclosed store is not pinned by the registry (GC can collect it)', async (
   `
 
   const { code, stdout, stderr } = await new Promise((resolve) => {
+    // Disable coverage tracking in the child (the documented
+    // @tapjs/processinfo opt-out): this GC probe imports
+    // sqlite-cache-store.js but exercises almost none of it, and tap's
+    // cross-process coverage merge lets the child's near-empty record mask
+    // the real per-file numbers (100% → 86%) instead of unioning them.
+    const env = { ...process.env, _TAPJS_PROCESSINFO_COVERAGE_: '0' }
     execFile(
       process.execPath,
       ['--expose-gc', '--input-type=module', '-e', script],
-      { timeout: 30000 },
+      { timeout: 30000, env },
       (err, stdout, stderr) => {
         resolve({ code: err ? (err.code ?? 1) : 0, stdout, stderr })
       },

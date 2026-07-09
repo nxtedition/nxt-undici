@@ -4,7 +4,9 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { Readable } from 'node:stream'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
-import { CacheHandler, serveFromCache, isEtagUsable } from '../lib/interceptor/cache.js'
+import { CacheHandler } from '../lib/interceptor/cache/cache-handler.js'
+import { serveFromCache } from '../lib/interceptor/cache/serve.js'
+import { isEtagUsable } from '../lib/interceptor/cache/headers.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
@@ -894,7 +896,7 @@ test('cache: isEtagUsable rejects non-string etags', async (t) => {
 })
 
 test('cache: serveFromCache tags absent id/method as null in the lookup doc', async (t) => {
-  // serveFromCache is a cross-module export (cache-revalidation drives it);
+  // serveFromCache is a cross-module export (revalidation.js drives it);
   // it must tolerate minimal opts without inventing trace tags.
   const docs = []
   const write = (obj, op) => docs.push({ ...obj, op })

@@ -1,7 +1,7 @@
 /* eslint-disable */
 // Dedicated tests for caching of range requests (nxtedition/nxt-undici#56).
 //
-// Current design (lib/interceptor/cache.js + lib/sqlite-cache-store.js):
+// Current design (lib/interceptor/cache/ + lib/sqlite-cache-store.js):
 // - 206 + valid single Content-Range is stored with its byte window
 //   (start inclusive, end exclusive); windows for the same URL coexist.
 // - A request Range is served from cache only on an EXACT window match

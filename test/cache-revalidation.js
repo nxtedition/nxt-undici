@@ -1025,3 +1025,181 @@ test('request no-store: revalidation replacement is delivered but not stored', a
   await rawRequest(dispatch, { ...base, headers: {} })
   t.equal(hits, 2, 'no-store replacement was not written to the cache')
 })
+
+// ---------------------------------------------------------------------------
+// Background-refresh in-flight guard: per-store and per-Vary-variant
+// (Copilot review #54, findings 1 & 2)
+// ---------------------------------------------------------------------------
+
+test('stale-while-revalidate: concurrent stale hits on one store coalesce into a single background refresh', async (t) => {
+  t.plan(3)
+  const seen = []
+  const server = await startServer((req, res) => {
+    seen.push(req.headers)
+    res.writeHead(304, { 'cache-control': 'max-age=60, stale-while-revalidate=60' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  seedEntry(store, origin(server), {
+    etag: '"v1"',
+    cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+  })
+  const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+
+  // Both fire in the same synchronous burst: the first adds the in-flight key,
+  // the second sees it and is coalesced before the first's refresh completes.
+  const [a, b] = await Promise.all([rawRequest(dispatch, opts), rawRequest(dispatch, opts)])
+  t.equal(a.body, 'cached-body', 'first stale hit served from cache')
+  t.equal(b.body, 'cached-body', 'second stale hit served from cache')
+
+  await waitFor(() => seen.length >= 1)
+  await flush()
+  t.equal(seen.length, 1, 'the two concurrent stale hits share one background refresh')
+})
+
+test('stale-while-revalidate: refreshes on different stores for the same URL do not block each other', async (t) => {
+  t.plan(1)
+  const seen = []
+  const server = await startServer((req, res) => {
+    seen.push(req.headers)
+    res.writeHead(304, { 'cache-control': 'max-age=60, stale-while-revalidate=60' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const storeA = new SqliteCacheStore({ location: ':memory:' })
+  const storeB = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  for (const store of [storeA, storeB]) {
+    seedEntry(store, origin(server), {
+      etag: '"v1"',
+      cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+    })
+  }
+  const base = { origin: origin(server), path: '/', method: 'GET', headers: {} }
+
+  await Promise.all([
+    rawRequest(dispatch, { ...base, cache: { store: storeA } }),
+    rawRequest(dispatch, { ...base, cache: { store: storeB } }),
+  ])
+  // With a module-global guard keyed only by URL, storeB's refresh would be
+  // suppressed and this would hang at 1 until the waitFor deadline.
+  await waitFor(() => seen.length === 2)
+  t.equal(seen.length, 2, 'each store runs its own background refresh (no cross-store suppression)')
+})
+
+test('stale-while-revalidate: distinct Vary variants of one URL refresh independently', async (t) => {
+  t.plan(1)
+  const seen = []
+  const server = await startServer((req, res) => {
+    seen.push(req.headers['accept-encoding'] ?? null)
+    res.writeHead(304, {
+      'cache-control': 'max-age=60, stale-while-revalidate=60',
+      vary: 'accept-encoding',
+    })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  // Two stored variants of the same URL, selected by Accept-Encoding.
+  for (const enc of ['gzip', 'br']) {
+    seedEntry(store, origin(server), {
+      headers: { vary: 'accept-encoding' },
+      cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+      etag: `"${enc}"`,
+    })
+    // seedEntry keys with headers:{}; overwrite the variant explicitly.
+    const buf = Buffer.from('cached-body')
+    const now = Date.now()
+    store.set(
+      { origin: origin(server), method: 'GET', path: '/', headers: { 'accept-encoding': enc } },
+      {
+        body: buf,
+        start: 0,
+        end: buf.byteLength,
+        statusCode: 200,
+        statusMessage: '',
+        headers: {},
+        cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+        etag: `"${enc}"`,
+        vary: { 'accept-encoding': enc },
+        cachedAt: now - 10e3,
+        staleAt: now - 5e3,
+        deleteAt: now + 3600e3,
+      },
+    )
+  }
+  const base = { origin: origin(server), path: '/', method: 'GET', cache: { store } }
+
+  await Promise.all([
+    rawRequest(dispatch, { ...base, headers: { 'accept-encoding': 'gzip' } }),
+    rawRequest(dispatch, { ...base, headers: { 'accept-encoding': 'br' } }),
+  ])
+  // The refresh key folds in the selected Vary variant, so the two variants do
+  // not share a single refresh slot.
+  await waitFor(() => seen.length === 2)
+  t.same(seen.sort(), ['br', 'gzip'], 'each Vary variant refreshed independently')
+})
+
+test('stale-while-revalidate: a failing background refresh is swallowed; the stale entry survives', async (t) => {
+  t.plan(3)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    // Kill the connection on the background conditional request.
+    res.destroy()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  seedEntry(store, origin(server), {
+    etag: '"v1"',
+    cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+  })
+  const key = { origin: origin(server), method: 'GET', path: '/', headers: {} }
+  const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+
+  const res = await rawRequest(dispatch, opts)
+  t.equal(res.statusCode, 200, 'stale entry served immediately')
+  t.equal(res.body, 'cached-body', 'stale body served despite the doomed refresh')
+
+  // Let the background refresh run and fail; it must not throw or evict.
+  await waitFor(() => hits >= 1)
+  await flush()
+  t.equal(store.get(key)?.etag, '"v1"', 'stale entry is retained after the refresh error')
+})
+
+test('freshening: a 304 that changes Vary recomputes the stored selector map (review)', async (t) => {
+  t.plan(2)
+  const server = await startServer((req, res) => {
+    res.writeHead(304, { 'cache-control': 'max-age=60', vary: 'accept-language' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  // Seeded entry has no Vary selectors.
+  seedEntry(store, origin(server), { etag: '"v1"', cacheControlDirectives: { 'max-age': 5 } })
+  const key = { origin: origin(server), method: 'GET', path: '/', headers: {} }
+  t.same(store.get(key)?.vary, {}, 'seeded entry starts with no Vary selectors')
+
+  await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  })
+  await flush()
+  // The 304 introduced `Vary: accept-language`; the freshened entry must adopt
+  // it (request had no Accept-Language, so the selector value is the null
+  // sentinel) rather than keeping the stale empty map.
+  t.same(store.get(key)?.vary, { 'accept-language': null }, "freshened entry adopts the 304's Vary")
+})

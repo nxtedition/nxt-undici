@@ -9,8 +9,8 @@
     "lib/*"
   ],
   "dependencies": {
-    "@nxtedition/scheduler": "^4.1.1",
-    "@nxtedition/trace": "^1.0.0",
+    "@nxtedition/scheduler": "^4.2.2",
+    "@nxtedition/trace": "^1.1.2",
     "@nxtedition/undici": "^11.1.9",
     "fast-querystring": "^1.1.2",
     "http-errors": "^2.0.1",
@@ -18,18 +18,18 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.5.2",
-    "eslint": "^10.2.0",
-    "eslint-plugin-n": "^17.24.0",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.6.0",
+    "eslint-plugin-n": "^18.2.1",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
+    "lint-staged": "^17.0.8",
     "mitata": "^1.0.34",
     "pino": "^10.3.1",
     "pinst": "^3.0.0",
-    "prettier": "^3.8.1",
+    "prettier": "^3.9.5",
     "send": "^1.2.1",
-    "tap": "^21.6.3",
-    "undici-types": "^8.0.2"
+    "tap": "^21.7.4",
+    "undici-types": "^8.7.0"
   },
   "scripts": {
     "prepare": "husky",

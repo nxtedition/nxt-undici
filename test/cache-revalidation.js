@@ -313,14 +313,16 @@ test('stale-if-error: origin 503 during revalidation serves the stale entry', as
 
 test('stale-if-error: serves stale without waiting for the 5xx body to drain', async (t) => {
   t.plan(2)
-  let bodyFullySent = false
+  let originAborted = false
   const server = await startServer((req, res) => {
     res.writeHead(503, { 'content-length': '1000000' })
     res.write(Buffer.alloc(16)) // headers + a little body, then hang
-    // Deliberately never end() — if the interceptor waited for the body to
-    // drain before serving stale, this request would hang until teardown.
+    // Deliberately never end(): the claimed body is 1 MB but only 16 bytes are
+    // sent. If the interceptor waited for the body to drain before serving
+    // stale, this request would hang until teardown. Instead it delivers stale
+    // and aborts the in-flight request, which closes this connection.
     res.on('close', () => {
-      bodyFullySent = false
+      originAborted = true
     })
   })
   t.teardown(server.close.bind(server))
@@ -335,7 +337,12 @@ test('stale-if-error: serves stale without waiting for the 5xx body to drain', a
 
   const res = await rawRequest(dispatch, opts)
   t.equal(res.body, 'cached-body', 'stale entry served promptly, before the 5xx body finished')
-  t.equal(bodyFullySent, false, 'origin never finished sending its body')
+  // The undelivered 1 MB body is never drained: the interceptor aborts the
+  // origin request right after serving stale, so the server observes the
+  // connection close. Wait deterministically rather than asserting a flag that
+  // could still be racing.
+  await waitFor(() => originAborted)
+  t.ok(originAborted, 'origin request was aborted, not drained to completion')
 })
 
 test('stale-if-error: without the directive the 503 is passed through', async (t) => {
@@ -605,6 +612,79 @@ test('request max-age=0: revalidates a fresh entry', async (t) => {
   })
   t.equal(res.body, 'cached-body')
   t.equal(seen.length, 1, 'max-age=0 demanded validation')
+})
+
+test('request max-age > 0: a fresh entry whose age is within the bound is served from cache', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('origin')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  // Fresh entry, ~10s old.
+  seedEntry(store, origin(server), {
+    cachedAtOffset: -10e3,
+    staleAtOffset: 60e3,
+    cacheControlDirectives: { 'max-age': 70 },
+  })
+
+  const res = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'cache-control': 'max-age=30' },
+    cache: { store },
+  })
+  t.equal(res.body, 'cached-body', 'age (~10s) is within max-age=30, so the cached entry is served')
+  t.equal(hits, 0, 'origin was not contacted')
+})
+
+test('request min-fresh: satisfied entry is served, unsatisfied entry revalidates', async (t) => {
+  t.plan(4)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(304)
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), path: '/', method: 'GET', cache: { store } }
+  // Fresh for ~10 more seconds.
+  const seed = () =>
+    seedEntry(store, origin(server), {
+      etag: '"v1"',
+      cachedAtOffset: -5e3,
+      staleAtOffset: 10e3,
+      cacheControlDirectives: { 'max-age': 15 },
+    })
+
+  seed()
+  const served = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'cache-control': 'min-fresh=5' },
+  })
+  t.equal(
+    served.body,
+    'cached-body',
+    'remaining freshness (~10s) >= min-fresh=5, served from cache',
+  )
+  t.equal(hits, 0, 'origin not contacted when min-fresh is satisfied')
+
+  seed()
+  const revalidated = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'cache-control': 'min-fresh=20' },
+  })
+  t.equal(revalidated.statusCode, 200, 'min-fresh=20 not satisfied by ~10s remaining — revalidated')
+  t.equal(hits, 1, 'origin contacted when min-fresh exceeds remaining freshness')
 })
 
 test('request max-stale: serves a stale entry within the tolerance without origin contact', async (t) => {

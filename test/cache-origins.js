@@ -107,6 +107,14 @@ test('origins: skips caching when the request origin does not match a RegExp ent
   t.equal(await originHitsFor([/example\.com/]), 2, 'RegExp miss bypasses the cache')
 })
 
+test('origins: a global-flag RegExp matches consistently across requests (no lastIndex drift)', async (t) => {
+  t.plan(1)
+  // With a `g` flag, RegExp#test is stateful: without a lastIndex reset the
+  // second request would test from mid-string, fail to match, and bypass the
+  // cache — so this hits the origin twice unless matching is stateless.
+  t.equal(await originHitsFor([/127\.0\.0\.1/g]), 1, 'global RegExp still enables caching on reuse')
+})
+
 test('origins: caches when the origin matches any entry in a mixed array', async (t) => {
   t.plan(1)
   t.equal(

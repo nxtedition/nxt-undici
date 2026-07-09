@@ -1255,6 +1255,41 @@ test('stale-while-revalidate: a failing background refresh is swallowed; the sta
   t.equal(store.get(key)?.etag, '"v1"', 'stale entry is retained after the refresh error')
 })
 
+test('stale-while-revalidate: a request no-store serves stale but suppresses the background refresh', async (t) => {
+  t.plan(3)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60, stale-while-revalidate=60', etag: '"v2"' })
+    res.end('refreshed')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const key = { origin: origin(server), method: 'GET', path: '/', headers: {} }
+  seedEntry(store, origin(server), {
+    etag: '"v1"',
+    cacheControlDirectives: { 'max-age': 5, 'stale-while-revalidate': 60 },
+  })
+
+  const res = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'cache-control': 'no-store' },
+    cache: { store },
+  })
+  t.equal(res.body, 'cached-body', 'stale entry still served to the no-store request')
+
+  // RFC 9111 §5.2.1.5: no response to a no-store request may be stored, so the
+  // background refresh must not run.
+  await flush()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  t.equal(hits, 0, 'no background revalidation was issued')
+  t.equal(store.get(key)?.etag, '"v1"', 'stored entry was not overwritten')
+})
+
 test('freshening: a 304 that changes Vary recomputes the stored selector map (review)', async (t) => {
   t.plan(2)
   const server = await startServer((req, res) => {

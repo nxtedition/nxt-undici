@@ -2,7 +2,6 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { request, dispatch, getGlobalDispatcher } from '../lib/index.js'
-import undici from '@nxtedition/undici'
 
 test('simple request', (t) => {
   t.plan(1)

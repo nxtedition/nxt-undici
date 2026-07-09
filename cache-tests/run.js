@@ -132,6 +132,9 @@ async function main() {
   if (args.json) {
     console.log(JSON.stringify(results, null, 2))
   }
+  // With --json, stdout carries ONLY the results object so tooling can parse
+  // it; all human-readable reporting below moves to stderr.
+  const print = args.json ? console.error : console.log
 
   // Classify with upstream determineTestResult (honorDependencies=false, like
   // undici's runner: a dependency failure already fails on its own).
@@ -190,9 +193,9 @@ async function main() {
   if (!args.ci || args.id != null) {
     const printGroup = (title, list) => {
       if (!list.length) return
-      console.log(`\n${title}:`)
+      print(`\n${title}:`)
       for (const [id, detail] of list) {
-        console.log(`  ${id}${detail ? ` — ${detail}` : ''}`)
+        print(`  ${id}${detail ? ` — ${detail}` : ''}`)
       }
     }
     printGroup('FAILED (required)', stats.failed)
@@ -203,14 +206,14 @@ async function main() {
     printGroup('retried', stats.retried)
   } else {
     for (const [id, detail] of unexpectedFailures) {
-      console.log(`FAILED: ${id} — ${detail}`)
+      print(`FAILED: ${id} — ${detail}`)
     }
     for (const [id, detail] of unexpectedSetup) {
-      console.log(`SETUP-FAILED (new): ${id} — ${detail}`)
+      print(`SETUP-FAILED (new): ${id} — ${detail}`)
     }
   }
 
-  console.log(`
+  print(`
 == cache-tests summary ==
   total run:        ${total} (skipped ${stats.skipped}: cdn_only/browser_only)
   passed:           ${stats.passed.length} (${pct(stats.passed.length)})
@@ -222,13 +225,13 @@ async function main() {
   retried:          ${stats.retried.length}`)
 
   if (staleKnown.length) {
-    console.log(
+    print(
       `\nWARNING: known-failures entries that now pass (remove them):\n  ${staleKnown.join('\n  ')}`,
     )
   }
 
   if (unexpectedFailures.length) {
-    console.log(`\n${unexpectedFailures.length} unexpected required-kind failure(s).`)
+    print(`\n${unexpectedFailures.length} unexpected required-kind failure(s).`)
     process.exitCode = 1
   }
   // A setup failure means the test was NOT verified. The baselined ones are
@@ -236,18 +239,18 @@ async function main() {
   // storability regression silently turning fail-verdicts into setup skips)
   // and must not go green.
   if (!args.suite && !args.id && unexpectedSetup.length) {
-    console.log(`\n${unexpectedSetup.length} setup failure(s) outside the baseline.`)
+    print(`\n${unexpectedSetup.length} setup failure(s) outside the baseline.`)
     process.exitCode = 1
   }
   // Harness failures are bugs in THIS runner (or timeouts) and a run where
   // nothing passed means the harness never actually verified anything — both
   // must fail CI even with zero "unexpected" conformance failures.
   if (stats.harness.length) {
-    console.log(`\n${stats.harness.length} harness failure(s).`)
+    print(`\n${stats.harness.length} harness failure(s).`)
     process.exitCode = 1
   }
   if (total > 0 && stats.passed.length === 0) {
-    console.log('\nNo test passed — harness sanity check failed.')
+    print('\nNo test passed — harness sanity check failed.')
     process.exitCode = 1
   }
 }

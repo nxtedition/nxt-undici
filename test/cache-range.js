@@ -60,10 +60,10 @@ function flush() {
 
 const FULL_BODY = '0123456789' // 10 bytes
 
-// A minimal origin that honours single closed/open byte ranges over FULL_BODY
-// and counts hits. Suffix and multi ranges are answered with 200 + full body
-// (a server MAY ignore Range) unless opts.strictRange, which answers them
-// properly (suffix) so storability of those responses can be observed.
+// A minimal origin that honours single closed/open byte ranges and suffix
+// ranges over FULL_BODY (answering 206 + Content-Range) and counts hits.
+// Anything else — multi ranges, malformed values — is answered with 200 +
+// full body (a server MAY ignore Range).
 function rangeServer({ maxAge = 60, etag = null, onRequest = null } = {}) {
   const state = { hits: 0, requests: [] }
   state.handler = (req, res) => {

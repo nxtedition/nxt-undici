@@ -313,3 +313,38 @@ test('trace-cache: forwarded 1xx emits no cache-store doc', async (t) => {
   t.equal(stores[0].statusCode, 200)
   t.equal(stores[0].stored, true)
 })
+
+// ---------------------------------------------------------------------------
+// non-cacheable FINAL status → cache-store skipped with reason 'status'
+// (interim 1xx stays silent; regression guard for the trace port on rebase)
+// ---------------------------------------------------------------------------
+
+test('trace-cache: non-cacheable status emits a skipped cache-store doc (reason status)', async (t) => {
+  const server = await startServer((req, res) => {
+    res.writeHead(404, { 'cache-control': 'max-age=60' })
+    res.end('missing')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  // request() throws on the 404 (response-error interceptor); the cache-store
+  // doc is emitted synchronously in CacheHandler.onHeaders before the error
+  // propagates, so it's already recorded.
+  await request(origin, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+  }).then(
+    ({ body }) => body.dump(),
+    () => {},
+  )
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1, 'the non-cacheable status still emits one skip doc')
+  t.equal(stores[0].statusCode, 404)
+  t.equal(stores[0].stored, false)
+  t.equal(stores[0].reason, 'status')
+})

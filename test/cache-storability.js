@@ -122,6 +122,37 @@ test('storability: invalid Expires (0) means already expired — not cached', as
   t.equal(hits, 2, 'Expires: 0 is treated as already expired (RFC 9111 §5.3)')
 })
 
+test('storability: past Expires with etag is stored for revalidation', async (t) => {
+  t.plan(2)
+  let hits = 0
+  let conditional = 0
+  const server = await startServer((req, res) => {
+    hits++
+    if (req.headers['if-none-match'] === '"e"') {
+      conditional++
+      res.writeHead(304)
+      res.end()
+    } else {
+      res.writeHead(200, {
+        expires: new Date(Date.now() - 60e3).toUTCString(),
+        etag: '"e"',
+      })
+      res.end('body')
+    }
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+
+  const first = await rawRequest(dispatch, opts)
+  await flush()
+  const second = await rawRequest(dispatch, opts)
+  t.equal(second.body, 'body', 'validated body served')
+  t.equal(conditional, 1, 'second request revalidated instead of refetching')
+})
+
 // ---------------------------------------------------------------------------
 // Corrected initial age (RFC 9111 §4.2.3)
 // ---------------------------------------------------------------------------
@@ -272,6 +303,31 @@ test('authorization: s-maxage permits shared-cache storage and reuse (#4911)', a
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
   t.equal(hits, 1, 's-maxage response cached and served for authorized requests')
+})
+
+test('authorization: must-revalidate permits storage for authorized requests', async (t) => {
+  t.plan(1)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60, must-revalidate' })
+    res.end('body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { authorization: 'Bearer secret' },
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, opts)
+  await rawRequest(dispatch, opts)
+  t.equal(hits, 1, 'must-revalidate response cached while fresh for authorized requests')
 })
 
 // ---------------------------------------------------------------------------

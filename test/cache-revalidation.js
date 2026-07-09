@@ -366,6 +366,37 @@ test('stale-if-error: without the directive the 503 is passed through', async (t
   t.equal(res.body, 'boom')
 })
 
+test('stale-if-error: honors exactly RFC 5861 error statuses (501 passes through, 502 serves stale)', async (t) => {
+  t.plan(4)
+  // 501 (Not Implemented) is NOT a stale-if-error status per RFC 5861 §4
+  // (500/502/503/504 only); the old `>= 500 && <= 504` range wrongly caught it.
+  for (const { status, servesStale } of [
+    { status: 501, servesStale: false },
+    { status: 502, servesStale: true },
+  ]) {
+    const server = await startServer((req, res) => {
+      res.writeHead(status)
+      res.end('err')
+    })
+    t.teardown(server.close.bind(server))
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    const dispatch = makeDispatch()
+    seedEntry(store, origin(server), {
+      etag: '"v1"',
+      cacheControlDirectives: { 'max-age': 5, 'stale-if-error': 60 },
+    })
+    const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+    const res = await rawRequest(dispatch, opts)
+    if (servesStale) {
+      t.equal(res.statusCode, 200, `${status} within the window serves the stale entry`)
+      t.equal(res.body, 'cached-body', `${status} served cached body`)
+    } else {
+      t.equal(res.statusCode, 501, `${status} is not an SIE error status — passed through`)
+      t.equal(res.body, 'err', `${status} delivered the origin response`)
+    }
+  }
+})
+
 test('stale-if-error: connection error before response serves the stale entry (#5513)', async (t) => {
   t.plan(2)
   // Port 1 (tcpmux) is privileged and never bound in practice — connecting

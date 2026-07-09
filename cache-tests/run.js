@@ -128,6 +128,7 @@ async function main() {
 
   await serverHandle.close()
   await agent.close()
+  store.close()
 
   if (args.json) {
     console.log(JSON.stringify(results, null, 2))
@@ -150,10 +151,19 @@ async function main() {
   }
   // makeTest returns [err.name, err.message] for every caught error, and the
   // vendored determineTestResult only maps 'AbortError' (and literal false) to
-  // harness_fail — so an internal runner bug (TypeError etc.) would otherwise
-  // masquerade as an ordinary test verdict (a "no" on check-kind, a FAIL on
-  // required-kind). Reclassify those here; results.mjs stays verbatim.
-  const INTERNAL_ERRORS = new Set(['TypeError', 'RangeError', 'ReferenceError', 'SyntaxError'])
+  // harness_fail — so an internal runner bug would otherwise masquerade as an
+  // ordinary test verdict (a "no" on check-kind, a FAIL on required-kind).
+  // Reclassify those here; results.mjs stays verbatim. Plain 'Error' is safe
+  // to include: the origin is 127.0.0.1 (no DNS) and undici transport errors
+  // carry specific names (SocketError etc.), so a bare Error here is a thrown
+  // harness bug, not a legitimate network outcome.
+  const INTERNAL_ERRORS = new Set([
+    'Error',
+    'TypeError',
+    'RangeError',
+    'ReferenceError',
+    'SyntaxError',
+  ])
   for (const test of testArray) {
     let symbol = determineTestResult(suites, test.id, results, false)
     const raw = results[test.id]

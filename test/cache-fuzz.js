@@ -470,6 +470,7 @@ async function runCampaign(t, { seed, iters, rangeHeavy, conditionalHeavy, label
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = compose(new undici.Agent(), interceptors.cache())
   const originUrl = `http://127.0.0.1:${server.address().port}`
   const paths = ['/a', '/b', '/c', '/d', '/e', '/f']
@@ -540,6 +541,7 @@ test(`cache fuzz: concurrent burst (seed=${SEED + 3})`, { timeout: 120_000 }, as
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = compose(new undici.Agent(), interceptors.cache())
   const originUrl = `http://127.0.0.1:${server.address().port}`
   const generate = makeRequestGen(rand, originUrl, ['/hot'], { rangeHeavy: true })

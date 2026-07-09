@@ -103,8 +103,9 @@ function rangeServer({ maxAge = 60, etag = null, onRequest = null } = {}) {
   return state
 }
 
-function makeOpts(server, extra = {}) {
+function makeOpts(t, server, extra = {}) {
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   return {
     store,
     base: {
@@ -128,7 +129,7 @@ test('range: exact closed range served from cached 206 with Age', async (t) => {
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const first = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   t.equal(first.statusCode, 206)
@@ -149,7 +150,7 @@ test('range: request without Range never sees a stored 206', async (t) => {
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const first = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   t.equal(first.statusCode, 206)
@@ -167,7 +168,7 @@ test('range: different window than cached 206 goes to origin', async (t) => {
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -189,7 +190,7 @@ test('range: distinct 206 windows coexist and each serves exactly', async (t) =>
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=0-4' } })
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=5-9' } })
@@ -210,7 +211,7 @@ test('range: cached 200 serves a closed full-body range, misses partial ranges',
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const full = await rawRequest(dispatch, base)
   t.equal(full.statusCode, 200)
@@ -237,7 +238,7 @@ test('range: suffix and multi ranges forward to origin with correct results', as
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   // Prime with a full 200 so a buggy match would have something to serve.
   await rawRequest(dispatch, base)
@@ -260,7 +261,7 @@ test('range: duplicated Range header is a miss, not a crash or wrong serve', asy
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -290,7 +291,7 @@ test('range: 206 without Content-Range is not stored', async (t) => {
   })
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -310,7 +311,7 @@ test('range: 206 with invalid Content-Range is not stored', async (t) => {
   })
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -329,7 +330,7 @@ test('range: Content-Range with wildcard size stores and serves exactly', async 
   })
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -353,7 +354,7 @@ test('range: HEAD response with Content-Range is not stored', async (t) => {
   })
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, method: 'HEAD', headers: { range: 'bytes=2-5' } })
   await flush()
@@ -371,7 +372,7 @@ test('range: stale 206 is refetched, not conditionally revalidated', async (t) =
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const first = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   t.equal(first.statusCode, 206)
@@ -403,7 +404,7 @@ test('range: stale 206 served under request max-stale', async (t) => {
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -423,7 +424,7 @@ test('range: If-Range requests bypass the cache in both directions', async (t) =
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   // Prime a fresh full 200.
   await rawRequest(dispatch, base)
@@ -456,7 +457,7 @@ test('range: Vary keeps 206 windows apart per variant', async (t) => {
   })
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const en = await rawRequest(dispatch, {
     ...base,
@@ -486,7 +487,7 @@ test('range: unsafe method invalidates stored 206 windows', async (t) => {
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
   await flush()
@@ -505,7 +506,7 @@ test('range: cached 206 body integrity across many alternating windows', async (
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
   const dispatch = makeDispatch()
-  const { base } = makeOpts(server)
+  const { base } = makeOpts(t, server)
 
   const windows = [
     [0, 2],

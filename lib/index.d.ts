@@ -117,6 +117,11 @@ export interface DispatchOptions {
 
 export interface RetryOptions {
   count?: number
+  /** Cap on the exponential backoff between attempts, in milliseconds
+   *  (default 10_000). The first retry is always immediate; subsequent waits
+   *  are 1s·2^(n−1) capped here, with 50–100% jitter applied. Does not affect
+   *  a server-provided retry-after (clamped to 60s separately). */
+  maxDelay?: number
   retry?: RetryFn
 }
 

@@ -560,6 +560,39 @@ test('request no-cache: revalidates a fresh entry instead of serving it', async 
   t.equal(seen.length, 1, 'origin was consulted despite the entry being fresh')
 })
 
+test('request no-cache in the (nonstandard) qualified form still forces revalidation', async (t) => {
+  t.plan(2)
+  const seen = []
+  const server = await startServer((req, res) => {
+    seen.push(req.headers)
+    res.writeHead(304, { 'cache-control': 'max-age=60' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  // Fresh entry — would be served without validation if the directive slipped.
+  seedEntry(store, origin(server), {
+    etag: '"v1"',
+    staleAtOffset: 60e3,
+    cacheControlDirectives: { 'max-age': 70 },
+  })
+
+  // `no-cache="set-cookie"` parses to an array (the qualified form has no
+  // request semantics per RFC, but must not be silently ignored). Any presence
+  // must force revalidation, not a blind fresh serve.
+  const res = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'cache-control': 'no-cache="set-cookie"' },
+    cache: { store },
+  })
+  t.equal(res.body, 'cached-body', 'validated body served')
+  t.equal(seen.length, 1, 'qualified request no-cache still revalidated (not served blindly)')
+})
+
 test('request no-cache on a cache miss still stores the response (write-back, #5510)', async (t) => {
   t.plan(2)
   let hits = 0

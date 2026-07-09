@@ -36,6 +36,7 @@
     "prepublishOnly": "pinst --disable",
     "postpublish": "pinst --enable",
     "test": "tap test",
+    "test:cache-tests": "node cache-tests/run.js --ci",
     "test:coverage": "tap test --coverage-report=text --coverage-report=html"
   },
   "lint-staged": {

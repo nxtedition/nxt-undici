@@ -5,7 +5,9 @@ import globals from 'globals'
 export default [
   eslint.configs.recommended,
   {
-    ignores: ['tmp*', 'benchmarks/**/*'],
+    // cache-tests/tests and cache-tests/engine/lib are vendored verbatim from
+    // http-tests/cache-tests — keep them lint-free so re-vendoring stays a copy.
+    ignores: ['tmp*', 'benchmarks/**/*', 'cache-tests/tests/**/*', 'cache-tests/engine/lib/**/*'],
   },
   // Base config:
   {

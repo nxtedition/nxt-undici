@@ -1,0 +1,14 @@
+{
+  "failures": {},
+  "setupFailures": {
+    "conditional-lm-fresh-no-lm": "cache doesn't answer If-Modified-Since from a fresh entry that has no stored Last-Modified (responds-to-conditionals family)",
+    "headers-store-Content-Range": "a 200 carrying a Content-Range header is stored as a range window, invisible to plain requests",
+    "headers-store-Set-Cookie": "Set-Cookie responses are never stored (shared-cache decision)",
+    "304-etag-update-response-Content-Range": "Content-Range storage quirk keeps the revalidation setup from being established",
+    "304-etag-update-response-Set-Cookie": "Set-Cookie responses are never stored, so there is nothing to revalidate",
+    "head-200-update": "HEAD is keyed separately from GET; a HEAD response can't update the GET entry",
+    "head-410-update": "HEAD is keyed separately from GET; a HEAD response can't update the GET entry",
+    "partial-use-headers": "206 entries are served only on byte-exact window matches; plain requests can't reuse partial-entry headers",
+    "partial-use-stored-headers": "206 entries are served only on byte-exact window matches; plain requests can't reuse partial-entry headers"
+  }
+}

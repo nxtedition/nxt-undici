@@ -465,7 +465,7 @@ async function runCampaign(t, { seed, iters, rangeHeavy, conditionalHeavy, label
   const rand = mulberry32(seed)
   const originState = makeFuzzOrigin(rand, { rangeHeavy })
   const server = createServer(originState.handler)
-  server.listen(0)
+  server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.teardown(server.close.bind(server))
 
@@ -535,7 +535,7 @@ test(`cache fuzz: concurrent burst (seed=${SEED + 3})`, { timeout: 120_000 }, as
   const rand = mulberry32(SEED + 3)
   const originState = makeFuzzOrigin(rand, { rangeHeavy: true })
   const server = createServer(originState.handler)
-  server.listen(0)
+  server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.teardown(server.close.bind(server))
 

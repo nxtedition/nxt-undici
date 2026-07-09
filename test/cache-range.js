@@ -49,7 +49,7 @@ function rawRequest(dispatch, opts) {
 
 async function startServer(handler) {
   const server = createServer(handler)
-  server.listen(0)
+  server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   return server
 }

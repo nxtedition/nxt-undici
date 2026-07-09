@@ -148,8 +148,18 @@ async function main() {
     retried: [],
     skipped: Object.keys(skipped).length,
   }
+  // makeTest returns [err.name, err.message] for every caught error, and the
+  // vendored determineTestResult only maps 'AbortError' (and literal false) to
+  // harness_fail — so an internal runner bug (TypeError etc.) would otherwise
+  // masquerade as an ordinary test verdict (a "no" on check-kind, a FAIL on
+  // required-kind). Reclassify those here; results.mjs stays verbatim.
+  const INTERNAL_ERRORS = new Set(['TypeError', 'RangeError', 'ReferenceError', 'SyntaxError'])
   for (const test of testArray) {
-    const symbol = determineTestResult(suites, test.id, results, false)
+    let symbol = determineTestResult(suites, test.id, results, false)
+    const raw = results[test.id]
+    if (Array.isArray(raw) && INTERNAL_ERRORS.has(raw[0])) {
+      symbol = resultTypes.harness_fail
+    }
     const detail = Array.isArray(results[test.id]) ? results[test.id].join(': ') : ''
     switch (symbol) {
       case resultTypes.pass:

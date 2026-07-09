@@ -20,20 +20,20 @@ test('request() ignores a foreign global dispatcher in the shared slot', async (
   server.listen(0)
   await new Promise((resolve) => server.once('listening', resolve))
 
+  // The fork's module init has already defined the slot (writable,
+  // non-configurable), so plain assignment swaps the value without touching
+  // the property's attributes — no defineProperty needed.
   const saved = globalThis[SLOT]
   t.teardown(() => {
-    Object.defineProperty(globalThis, SLOT, { value: saved, writable: true })
+    globalThis[SLOT] = saved
   })
   // Simulate node's built-in undici v8 Agent occupying the slot: not a fork
   // Dispatcher, and its dispatch requires the new-style handler API.
-  Object.defineProperty(globalThis, SLOT, {
-    value: {
-      dispatch() {
-        throw new Error('invalid onRequestStart method')
-      },
+  globalThis[SLOT] = {
+    dispatch() {
+      throw new Error('invalid onRequestStart method')
     },
-    writable: true,
-  })
+  }
 
   const { statusCode, body } = await request(`http://127.0.0.1:${server.address().port}/`)
   let text = ''
@@ -56,7 +56,7 @@ test('request() still honours a real fork dispatcher set as global', async (t) =
   const saved = globalThis[SLOT]
   const agent = new Agent()
   t.teardown(async () => {
-    Object.defineProperty(globalThis, SLOT, { value: saved, writable: true })
+    globalThis[SLOT] = saved
     await agent.close()
   })
 

@@ -6,7 +6,7 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once, EventEmitter } from 'node:events'
-import { compose, interceptors, request } from '../lib/index.js'
+import { compose, interceptors, request, getGlobalDispatcher } from '../lib/index.js'
 import { RequestHandler } from '../lib/request.js'
 import undici from '@nxtedition/undici'
 
@@ -337,7 +337,7 @@ test('request: two-arg object-first form { url } with opts works and uses the di
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const port = server.address().port
-    const inner = undici.getGlobalDispatcher()
+    const inner = getGlobalDispatcher()
     let used = false
     const dispatcher = {
       dispatch(opts, handler) {

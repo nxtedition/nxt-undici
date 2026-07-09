@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { test } from 'tap'
 import { createServer } from 'node:http'
-import { request, dispatch } from '../lib/index.js'
+import { request, dispatch, getGlobalDispatcher } from '../lib/index.js'
 import undici from '@nxtedition/undici'
 
 test('simple request', (t) => {
@@ -55,7 +55,7 @@ test('request: single-arg form uses opts.dispatcher', (t) => {
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const port = server.address().port
-    const inner = undici.getGlobalDispatcher()
+    const inner = getGlobalDispatcher()
     let dispatched = false
     const dispatcher = {
       dispatch(opts, handler) {
@@ -84,7 +84,7 @@ test('request: single-arg form uses opts.dispatch alias', (t) => {
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const port = server.address().port
-    const inner = undici.getGlobalDispatcher()
+    const inner = getGlobalDispatcher()
     let dispatched = false
     const dispatcher = {
       dispatch(opts, handler) {
@@ -113,7 +113,7 @@ test('request: two-arg form still honors opts.dispatcher (no regression)', (t) =
   t.teardown(server.close.bind(server))
   server.listen(0, async () => {
     const port = server.address().port
-    const inner = undici.getGlobalDispatcher()
+    const inner = getGlobalDispatcher()
     let dispatched = false
     const dispatcher = {
       dispatch(opts, handler) {
@@ -203,7 +203,7 @@ test('dispatch: export dispatches to a server and calls handler', (t) => {
     const port = server.address().port
     const statusCode = await new Promise((resolve, reject) => {
       dispatch(
-        undici.getGlobalDispatcher(),
+        getGlobalDispatcher(),
         {
           origin: `http://0.0.0.0:${port}`,
           path: '/',
@@ -241,7 +241,7 @@ test('dispatch: array origin resolves to a string via defaultLookup', (t) => {
     const port = server.address().port
     const statusCode = await new Promise((resolve, reject) => {
       dispatch(
-        undici.getGlobalDispatcher(),
+        getGlobalDispatcher(),
         {
           origin: [`http://0.0.0.0:${port}`],
           path: '/',
@@ -277,7 +277,7 @@ test('dispatch: object origin with hostname builds URL via defaultLookup', (t) =
     const port = server.address().port
     const statusCode = await new Promise((resolve, reject) => {
       dispatch(
-        undici.getGlobalDispatcher(),
+        getGlobalDispatcher(),
         {
           // Object origin without .host but with .hostname and .port
           origin: { protocol: 'http:', hostname: '0.0.0.0', port },
@@ -314,7 +314,7 @@ test('dispatch: object origin without host propagates error via callback', (t) =
     const port = server.address().port
     await new Promise((resolve) => {
       dispatch(
-        undici.getGlobalDispatcher(),
+        getGlobalDispatcher(),
         {
           // Object origin with no host or hostname — defaultLookup throws,
           // caught and forwarded as callback(err)

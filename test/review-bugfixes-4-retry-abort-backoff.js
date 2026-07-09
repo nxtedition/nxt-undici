@@ -2,8 +2,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import tp from 'node:timers/promises'
-import undici from '@nxtedition/undici'
-import { compose, interceptors, request } from '../lib/index.js'
+import { compose, interceptors, request, getGlobalDispatcher } from '../lib/index.js'
 
 // Regression tests: a downstream abort that lands DURING the retry backoff
 // wait (after an attempt finished, before the next one is dispatched) must:
@@ -38,7 +37,7 @@ test('retry: abort during backoff delivers onError with the reason (raw dispatch
   t.teardown(server.close.bind(server))
 
   const firstAttempt = once(server, 'request')
-  const dispatch = compose(undici.getGlobalDispatcher(), interceptors.responseRetry())
+  const dispatch = compose(getGlobalDispatcher(), interceptors.responseRetry())
 
   const reason = new Error('user aborted during backoff')
   let abort = null
@@ -103,7 +102,7 @@ test('retry: reasonless abort during backoff falls back to RequestAbortedError',
   t.teardown(server.close.bind(server))
 
   const firstAttempt = once(server, 'request')
-  const dispatch = compose(undici.getGlobalDispatcher(), interceptors.responseRetry())
+  const dispatch = compose(getGlobalDispatcher(), interceptors.responseRetry())
 
   let abort = null
 

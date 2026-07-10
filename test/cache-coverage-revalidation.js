@@ -677,8 +677,8 @@ test('revalidation: 304 Connection field list (array) excludes named fields; min
   t.equal(rec.chunks.length, 0, 'a body-less entry serves no data')
 })
 
-test('revalidation: 304 withdrawing cacheability via private serves but does not re-store', async (t) => {
-  t.plan(3)
+test('revalidation: 304 withdrawing cacheability via private expires the stored entry', async (t) => {
+  t.plan(4)
   const sets = []
   const rec = makeRecorder()
   const h = new RevalidationHandler(
@@ -702,7 +702,12 @@ test('revalidation: 304 withdrawing cacheability via private serves but does not
   h.onHeaders(304, { 'cache-control': 'private, max-age=60' }, () => {})
   h.onComplete({})
 
-  t.equal(sets.length, 0, 'a now-private response is never written to the shared store')
+  // The withdrawal must not leave a REUSABLE entry behind: the only write is
+  // an already-expired tombstone that supersedes the stored variant, closing
+  // the validation-free stale windows (max-stale/SWR) its old directives
+  // granted. See review-bugfixes-5-revalidation.js.
+  t.equal(sets.length, 1, 'exactly one write: the expiry tombstone')
+  t.ok(sets[0].deleteAt <= Date.now(), 'tombstone is already expired, never servable')
   t.equal(rec.body(), 'cached-body', 'this validated use is still served')
   t.equal(
     rec.headersCalls[0].headers['cache-control'],

@@ -269,7 +269,9 @@ test('authorization permission requires syntactically valid response directives'
       `${cacheControl}: authenticated response was not shared`,
     )
     store.close()
-    server.close()
+    // Await the close before the next iteration so the loop doesn't leave a
+    // stack of open server handles (a source of flakiness/hangs under load).
+    await new Promise((resolve) => server.close(resolve))
   }
 
   t.equal(

@@ -34,7 +34,7 @@ export type OriginLike = URLLike | readonly URLLike[]
 export type RequestSignal = AbortSignal | EventEmitter
 
 export interface Dispatcher {
-  dispatch(opts: object, handler: DispatchHandler): void
+  dispatch(opts: DispatchOptions, handler: DispatchHandler): void
 }
 
 export interface DispatchHandler {

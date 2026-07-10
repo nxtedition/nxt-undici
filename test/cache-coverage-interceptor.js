@@ -782,6 +782,37 @@ test('cache: if-range request with no-store does not store (#74)', async (t) => 
   t.equal(stores.length, 0, 'request no-store forbids storing the if-range answer')
 })
 
+test('cache: if-range + only-if-cached is a 504, not an origin fetch (#74)', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const { statusCode } = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'if-range': '"abc"', 'cache-control': 'only-if-cached' },
+    cache: { store },
+    trace: writer,
+  })
+
+  // Read miss + only-if-cached: RFC 9111 §5.2.1.7 forbids contacting the
+  // origin, so the interceptor answers a synthetic 504 like every other miss.
+  t.equal(statusCode, 504)
+  t.equal(hits, 0, 'origin not contacted')
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+  t.equal(lookups[0].result, 'miss')
+  t.equal(lookups[0].reason, 'only-if-cached')
+})
+
 test('cache: if-match / if-unmodified-since still bypass entirely', async (t) => {
   for (const header of ['if-match', 'if-unmodified-since']) {
     const server = await startServer((req, res) => {

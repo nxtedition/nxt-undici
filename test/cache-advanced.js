@@ -2188,7 +2188,7 @@ test('cache: multi-line If-None-Match with a matching etag returns 304', async (
   t.equal(hits, 1, 'origin not contacted')
 })
 
-test('cache: multi-line If-None-Match containing a wildcard returns 304', async (t) => {
+test('cache: single-element If-None-Match array wildcard returns 304', async (t) => {
   t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
@@ -2214,15 +2214,53 @@ test('cache: multi-line If-None-Match containing a wildcard returns 304', async 
 
   await rawRequest(dispatch, base)
 
-  // Duplicated wildcard lines collapse to '*, *' (RFC 9110 §5.3); a '*'
-  // anywhere in the list is still a wildcard and must return 304, not fall
-  // through to the full 200.
+  // A one-element array normalizes to a lone '*' — a valid wildcard precondition
+  // (RFC 9110 §13.1.2), so it returns 304 without contacting the origin.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': ['*'] },
+  })
+  t.equal(result.statusCode, 304, 'single-element wildcard array returns 304')
+  t.equal(hits, 1, 'origin not contacted')
+})
+
+test('cache: duplicated wildcard If-None-Match is invalid and serves the stored 200', async (t) => {
+  t.plan(3)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"abc123"',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // Duplicated wildcard lines collapse to '*, *' (RFC 9110 §5.3). Per §13.1.2
+  // '*' is the alternative to an entity-tag list, not a member of it, so '*, *'
+  // is a malformed precondition: it is ignored ("proceed as normal") and the
+  // fresh entry serves the stored 200 rather than being promoted to a wildcard.
   const result = await rawRequestWithBody(dispatch, {
     ...base,
     headers: { 'if-none-match': ['*', '*'] },
   })
-  t.equal(result.statusCode, 304, 'wildcard among multiple lines returns 304')
-  t.equal(hits, 1, 'origin not contacted')
+  t.equal(result.statusCode, 200, 'duplicated wildcard serves stored 200')
+  t.equal(result.body, 'ok', 'stored body is served')
+  t.equal(hits, 1, 'origin not contacted for fresh entry')
 })
 
 test('cache: If-Modified-Since returns 304 when resource not modified', async (t) => {

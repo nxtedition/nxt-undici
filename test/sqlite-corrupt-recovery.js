@@ -66,8 +66,15 @@ async function withWarnings(fn) {
   const warnings = []
   const onWarning = (w) => warnings.push(w)
   process.on('warning', onWarning)
-  const result = await fn()
-  return { result, warnings, dispose: () => process.removeListener('warning', onWarning) }
+  try {
+    const result = await fn()
+    return { result, warnings, dispose: () => process.removeListener('warning', onWarning) }
+  } catch (err) {
+    // Remove the listener on the throw path — otherwise a construction that
+    // unexpectedly fails leaks a global 'warning' listener into later tests.
+    process.removeListener('warning', onWarning)
+    throw err
+  }
 }
 
 test('recovers from a file that is not a SQLite database (SQLITE_NOTADB)', async (t) => {

@@ -11,6 +11,8 @@
 //   node cache-tests/run.js --json          print the raw results object
 //   node cache-tests/run.js --emit-pass-baseline  print pass-baseline.json's
 //                                           entry for the current environment
+//                                           (full run only; add --heuristic
+//                                           for the heuristic entry)
 //
 // Result semantics follow upstream lib/results.mjs: only `kind: required`
 // (or kind-less) test failures are conformance FAILURES; `optimal` failures
@@ -18,11 +20,13 @@
 // known-failures.json with a reason each; CI fails on any required failure
 // not listed there (and reports stale entries that now pass).
 //
-// Beyond required failures, CI also gates on: setup failures outside the
-// baseline, harness failures, a zero-pass run, any `retried` (duplicate
-// dispatch — this runner composes no retry interceptor, so a retry is a bug)
-// outside known-failures' `retries`, and any regression in the ratcheted set
-// of currently-passing optimal/check tests (pass-baseline.json, per env).
+// Beyond required failures, CI also gates on: harness failures, a zero-pass
+// run, and any `retried` (duplicate dispatch — this runner composes no retry
+// interceptor, so a retry is a bug) outside known-failures' `retries`. Two
+// further gates apply to FULL runs only (a --suite/--id subset sees only part
+// of each baseline, so they are disabled there): setup failures outside the
+// baseline, and any regression in the ratcheted set of currently-passing
+// optimal/check tests (pass-baseline.json, per env).
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
@@ -57,6 +61,16 @@ function parseArgs(argv) {
       console.error(`Unknown argument: ${arg}`)
       process.exit(2)
     }
+  }
+  // --emit-pass-baseline must be a FULL standalone run: a --suite/--id subset
+  // would emit a truncated baseline (silently disabling the ratchet for the
+  // omitted tests once committed), and --json/--ci would interleave their own
+  // output on stdout, breaking the "stdout is a single JSON document" contract.
+  if (args.emitPassBaseline && (args.suite || args.id != null || args.json || args.ci)) {
+    console.error(
+      '--emit-pass-baseline must run the full suite alone (not with --suite/--id/--json/--ci)',
+    )
+    process.exit(2)
   }
   return args
 }

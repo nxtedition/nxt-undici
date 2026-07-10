@@ -8,23 +8,25 @@ fork's cache interceptor directly — no `fetch`, no browser
 ## Running
 
 ```sh
-npm run test:cache-tests            # CI: runs BOTH default and --heuristic envs, quiet, exit 1 on any gate
+npm run test:cache-tests            # CI: default env, then --heuristic env (&&: heuristic runs only if default passes)
 node cache-tests/run.js             # verbose: every non-pass with its assertion message
 node cache-tests/run.js --suite=partial,stale
 node cache-tests/run.js --id=freshness-max-age   # single test + full wire dump
 node cache-tests/run.js --heuristic # opt-in heuristic-freshness environment
 node cache-tests/run.js --json      # raw per-test results object
-node cache-tests/run.js --emit-pass-baseline              # regenerate pass-baseline.json[default]
+node cache-tests/run.js --emit-pass-baseline              # regenerate pass-baseline.json[default] (full run only)
 node cache-tests/run.js --heuristic --emit-pass-baseline  # ...and [heuristic]
 ```
 
-CI (`--ci`) exits 1 on any of: an unexpected required-kind failure, a setup
-failure outside the baseline, a harness failure, a zero-pass run, a `retried`
-verdict outside the baseline (a duplicate dispatch — this runner composes no
-retry interceptor, so a retry is a double-dispatch bug that also silently drops
-the test from verification), or a **pass-ratchet regression** (a previously
-passing `optimal`/`check` test that stopped passing). `test:cache-tests` runs
-the gate in both the default and `--heuristic` environments.
+A full `--ci` run exits 1 on any of: an unexpected required-kind failure, a
+harness failure, a zero-pass run, a `retried` verdict outside the baseline (a
+duplicate dispatch — this runner composes no retry interceptor, so a retry is a
+double-dispatch bug that also silently drops the test from verification), a
+setup failure outside the baseline, or a **pass-ratchet regression** (a
+previously passing `optimal`/`check` test that stopped passing). The last two
+gates need the full suite, so they are disabled on `--suite`/`--id` subset runs
+— only a full run is equivalent to CI. `test:cache-tests` runs the full gate in
+the default environment and then, if it passes, the `--heuristic` environment.
 
 ## Layout
 

@@ -40,3 +40,10 @@ test('response errors do not attach an uncaptured body', (t) => {
   t.equal(Object.hasOwn(error, 'body'), false)
   t.end()
 })
+
+test('response errors do not attach a decoded JSON null body', (t) => {
+  const error = captureError('null')
+
+  t.equal(Object.hasOwn(error, 'body'), false)
+  t.end()
+})

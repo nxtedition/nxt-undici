@@ -128,9 +128,9 @@ test('206 with open-ended Content-Range (missing last-pos) is not stored', async
   t.end()
 })
 
-test('serveFromCache defers delivery while the handler is paused', (t) => {
+test('serveFromCache honors onData backpressure (defers onComplete until resume)', (t) => {
   const events = []
-  let savedResume
+  let resume
   const entry = {
     statusCode: 200,
     headers: { 'cache-control': 'max-age=60' },
@@ -138,82 +138,49 @@ test('serveFromCache defers delivery while the handler is paused', (t) => {
     cachedAt: Date.now(),
   }
 
-  // Pause at onHeaders: no data/complete until resume().
   serveFromCache(
     entry,
     {},
     {
       onConnect() {},
-      onHeaders(sc, h, resume) {
+      onHeaders(sc, h, r) {
+        resume = r
         events.push('headers')
-        savedResume = resume
-        return false
+        return true
       },
       onData(chunk) {
         events.push(`data:${chunk}`)
-        return true
+        return false // pause
       },
       onComplete() {
         events.push('complete')
       },
-      onError(err) {
-        events.push(`error:${err.message}`)
-      },
-    },
-  )
-  t.strictSame(events, ['headers'], 'paused at headers: nothing delivered yet')
-  savedResume()
-  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'resume drives the rest')
-
-  // Pause at onData: onComplete deferred until resume().
-  const events2 = []
-  let resume2
-  serveFromCache(
-    entry,
-    {},
-    {
-      onConnect() {},
-      onHeaders(sc, h, resume) {
-        resume2 = resume
-        events2.push('headers')
-        return true
-      },
-      onData(chunk) {
-        events2.push('data')
-        return false
-      },
-      onComplete() {
-        events2.push('complete')
-      },
       onError() {},
     },
   )
-  t.strictSame(events2, ['headers', 'data'], 'paused at data: complete deferred')
-  resume2()
-  t.strictSame(events2, ['headers', 'data', 'complete'], 'resume delivers completion')
+  t.strictSame(events, ['headers', 'data:hello'], 'paused after data: complete deferred')
+  resume()
+  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'resume delivers completion')
   t.end()
 })
 
-test('serveFromCache does not deadlock when the handler resumes synchronously before returning false', (t) => {
+test('serveFromCache ignores a pause attempt at onHeaders (weak contract)', (t) => {
+  // Returning false from onHeaders is NOT honored — the body and completion
+  // are delivered synchronously anyway.
+  const events = []
   const entry = {
     statusCode: 200,
     headers: { 'cache-control': 'max-age=60' },
     body: Buffer.from('hello'),
     cachedAt: Date.now(),
   }
-
-  // Synchronous resume() inside onHeaders, THEN return false. `deferred` isn't
-  // set yet, so the resume must be remembered and delivery must continue
-  // rather than parking a continuation nothing will fire.
-  const events = []
   serveFromCache(
     entry,
     {},
     {
       onConnect() {},
-      onHeaders(sc, h, resume) {
+      onHeaders() {
         events.push('headers')
-        resume()
         return false
       },
       onData(chunk) {
@@ -226,10 +193,21 @@ test('serveFromCache does not deadlock when the handler resumes synchronously be
       onError() {},
     },
   )
-  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'delivery completed, no deadlock')
+  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'onHeaders false does not pause')
+  t.end()
+})
 
-  // Same hazard one stage later: the handler stashes the resume from
-  // onHeaders and calls it synchronously inside onData before returning false.
+test('serveFromCache does not deadlock when the handler resumes synchronously inside onData', (t) => {
+  const entry = {
+    statusCode: 200,
+    headers: { 'cache-control': 'max-age=60' },
+    body: Buffer.from('hello'),
+    cachedAt: Date.now(),
+  }
+
+  // Handler stashes the resume from onHeaders and calls it synchronously
+  // inside onData before returning false. completePending isn't set yet, so
+  // the resume must be remembered and onComplete must still fire.
   const events2 = []
   let captured
   serveFromCache(

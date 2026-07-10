@@ -5,6 +5,8 @@
 //   materialized every candidate row's body blob per get), and the body blob
 //   must be the last column so candidate filtering never walks its overflow
 //   pages.
+// - schema migration must drop a full stale-version table before trying to
+//   allocate the current table and indexes.
 // - the constructor must survive SQLITE_BUSY from another process's write
 //   transaction during a multi-process cold start on a shared DB file.
 // - max_page_count must derive from the file's actual page size, not a
@@ -141,6 +143,55 @@ test('schema v12: no temp B-tree sort on lookup; body blob is the last column', 
     plan.some((r) => /TEMP B-TREE/i.test(r.detail)),
     `no temp b-tree in plan: ${plan.map((r) => r.detail).join(' | ')}`,
   )
+  t.end()
+})
+
+test('schema migration frees a full stale database before creating the current schema', async (t) => {
+  const dbPath = tmpDb(t, 'full-schema-migration')
+  const maxPages = 96
+  const pageSize = 1024
+
+  const seed = new DatabaseSync(dbPath)
+  seed.exec(`
+    PRAGMA page_size = ${pageSize};
+    VACUUM;
+    PRAGMA journal_mode = DELETE;
+    PRAGMA max_page_count = ${maxPages};
+    CREATE TABLE cacheInterceptorV11 (id INTEGER PRIMARY KEY, body BLOB);
+  `)
+  const insert = seed.prepare('INSERT INTO cacheInterceptorV11(body) VALUES (?)')
+  let fullError
+  while (fullError === undefined) {
+    try {
+      insert.run(Buffer.alloc(700))
+    } catch (err) {
+      fullError = err
+    }
+  }
+  t.equal(fullError.errcode, 13, 'fixture consumed every database page')
+  t.equal(seed.prepare('PRAGMA page_count').get().page_count, maxPages)
+  t.equal(seed.prepare('PRAGMA freelist_count').get().freelist_count, 0)
+  seed.close()
+
+  // Before the fix, CREATE TABLE V12 ran first and threw SQLITE_FULL, so the
+  // stale-table cleanup below it was unreachable on every later construction.
+  const store = new SqliteCacheStore({ location: dbPath, maxSize: maxPages * pageSize })
+  t.teardown(() => store.close())
+  store.set(makeKey(), makeValue())
+  await flush()
+  t.equal(store.get(makeKey())?.body?.toString(), 'hello', 'migrated store is usable')
+  store.close()
+
+  const inspect = new DatabaseSync(dbPath, { readOnly: true })
+  t.teardown(() => inspect.close())
+  const cacheTables = inspect
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'cacheInterceptorV%'`,
+    )
+    .all()
+    .map(({ name }) => name)
+    .filter((name) => /^cacheInterceptorV\d+$/.test(name))
+  t.same(cacheTables, ['cacheInterceptorV12'], 'stale schema was replaced')
   t.end()
 })
 

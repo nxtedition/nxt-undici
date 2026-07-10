@@ -611,14 +611,14 @@ test('cache: 5xx responses are not cached', async (t) => {
   t.equal(hits, 2, '5xx responses are never cached')
 })
 
-test('cache: a non-storable 4xx status (403) is not cached', async (t) => {
+test('cache: a status this cache declines (403) is not cached', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // 403 is a 4xx that is NOT on the cacheable-status list (unlike 404/410),
-    // so it is never stored even with explicit freshness. See
-    // test/cache-storable-statuses.js for the 404/410 negative-caching path.
+    // 403 is RFC-cacheable given freshness (§15.1), but this cache deliberately
+    // declines it (unlike 404/410) — so it is not stored even with explicit
+    // freshness. See test/cache-storable-statuses.js for the 404/410 path.
     res.writeHead(403, { 'cache-control': 's-maxage=60' })
     res.end('forbidden')
   })
@@ -636,14 +636,14 @@ test('cache: a non-storable 4xx status (403) is not cached', async (t) => {
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'a non-storable 4xx status is never cached')
+  t.equal(hits, 2, 'a status this cache declines is not cached')
 })
 
 // ---------------------------------------------------------------------------
 // No TTL — response without cache-control max-age/s-maxage is not cached
 // ---------------------------------------------------------------------------
 
-test('cache: response without TTL (no max-age/s-maxage/immutable) is not cached', async (t) => {
+test('cache: response without TTL (no max-age/s-maxage/Expires) is not cached', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {

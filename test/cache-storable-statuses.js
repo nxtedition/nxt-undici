@@ -144,11 +144,12 @@ test('storability: non-200 statuses are NOT heuristically cached (200 is)', asyn
   t.end()
 })
 
-test('storability: an uncacheable status (500) is still never stored', async (t) => {
+test('storability: a status this cache declines (500) is not stored even with explicit freshness', async (t) => {
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // Even WITH explicit freshness, 500 is not on the cacheable list.
+    // 500 is RFC-cacheable given freshness (§15.1), but outside this cache's
+    // stored subset — so even WITH explicit freshness it is deliberately declined.
     res.writeHead(500, { 'cache-control': 'max-age=60' })
     res.end('error')
   })

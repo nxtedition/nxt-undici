@@ -11,9 +11,10 @@
 // - present-but-malformed max-age / s-maxage must surface as explicit
 //   lifetime 0 (like invalid Expires), not as absent (which fell through to
 //   Expires / heuristics and over-cached).
-// - immutable is an origin-sent directive, so it grants freshness for every
-//   status CacheHandler admits (200/206/307) like a large explicit max-age;
-//   only the cache-invented heuristic/defaultTTL lifetimes stay 200-only.
+// - immutable (RFC 8246 §2) is NOT a freshness source: it neither defines nor
+//   extends the lifetime, so on its own it yields no lifetime for any status;
+//   freshness must come from s-maxage/max-age/Expires (or, 200-only, an opt-in
+//   heuristic/defaultTTL).
 // - a response arriving already stale but inside its stale-while-revalidate /
 //   stale-if-error window must be stored even without a validator (RFC 5861
 //   SWR needs no validator).
@@ -201,18 +202,24 @@ test('determineLifetime: malformed max-age no longer falls through to Expires', 
 // freshness.js
 // ---------------------------------------------------------------------------
 
-test('determineLifetime: immutable applies to every admitted status (like a large max-age)', (t) => {
+test('determineLifetime: immutable is not a freshness source (yields no lifetime)', (t) => {
   const now = Date.now()
-  // immutable is origin-sent, so — like s-maxage/max-age/Expires — it is NOT
-  // status-gated; it grants the same lifetime to every status CacheHandler
-  // admits. Only the cache-invented heuristic/defaultTTL lifetimes are 200-only.
+  // RFC 8246 §2: immutable neither defines nor extends the freshness lifetime,
+  // so on its own it yields no lifetime for ANY status — freshness must come
+  // from s-maxage/max-age/Expires (or an opt-in heuristic/defaultTTL, 200-only).
   for (const statusCode of [200, 206, 301, 307, 308, 404, 410]) {
-    const info = determineLifetime(statusCode, {}, { immutable: true }, {}, now)
-    t.ok(info && info.lifetime > 0, `immutable grants freshness for ${statusCode}`)
-    // immutable is origin-provided, so it is explicit (like max-age), not a
-    // cache-invented lifetime — matters for store-and-revalidate gating.
-    t.equal(info.explicit, true, `immutable is explicit freshness for ${statusCode}`)
+    t.equal(
+      determineLifetime(statusCode, {}, { immutable: true }, {}, now),
+      null,
+      `immutable alone grants no freshness for ${statusCode}`,
+    )
   }
+  // An explicit lifetime alongside immutable is set by max-age, not extended.
+  const withMaxAge = determineLifetime(200, {}, { immutable: true, 'max-age': 60 }, {}, now)
+  t.ok(
+    withMaxAge && withMaxAge.lifetime === 60 && withMaxAge.explicit === true,
+    'max-age sets the lifetime; immutable does not extend it',
+  )
   // The cache-invented lifetimes stay 200-only.
   t.equal(
     determineLifetime(

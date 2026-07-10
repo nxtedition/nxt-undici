@@ -121,6 +121,16 @@ test('parseCacheControl - malformed arguments follow directive-specific safe beh
     'unterminated quoted immutable argument consumes its tail',
   )
   t.strictSame(
+    parseCacheControl('immutable="x\\", public'),
+    { immutable: true },
+    'an escaped trailing quote does not terminate the quoted argument',
+  )
+  t.strictSame(
+    parseCacheControl('immutable="x\\\\", max-age=60'),
+    { immutable: true, 'max-age': 60 },
+    'an even backslash run leaves the closing quote unescaped',
+  )
+  t.strictSame(
     parseCacheControl('immutable="x, public", max-age=60'),
     { immutable: true, 'max-age': 60 },
     'a real directive after the closing quote is still parsed',

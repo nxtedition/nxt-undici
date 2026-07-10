@@ -393,6 +393,72 @@ test('cache: Vary with a trailing comma skips the empty member', async (t) => {
   t.equal(value.vary['x-select'], 'a', 'request value recorded for the real selector')
 })
 
+test('cache: Vary as multiple field lines (string array) is stored', async (t) => {
+  // A list-typed Vary emitted as multiple field lines arrives as an array
+  // through parseHeaders; node's http server can't easily emit them, so drive
+  // the exported CacheHandler directly the way the dispatch chain would.
+  const store = makeRecordingStore()
+  const inner = makeInnerHandler()
+  const handler = new CacheHandler(
+    {
+      origin: 'http://example.local',
+      path: '/',
+      method: 'GET',
+      headers: { 'x-a': 'one', 'x-b': 'two' },
+    },
+    { store, handler: inner },
+  )
+
+  handler.onConnect(() => {})
+  handler.onHeaders(200, { 'cache-control': 'max-age=60', vary: ['x-a, x-b', 'x-c'] }, () => {})
+  handler.onData(Buffer.from('body'))
+  handler.onComplete(null)
+
+  t.equal(store.sets.length, 1, 'entry stored despite array Vary')
+  const { value } = store.sets[0]
+  t.strictSame(
+    Object.keys(value.vary),
+    ['x-a', 'x-b', 'x-c'],
+    'every field across all Vary lines is a selector',
+  )
+  t.equal(value.vary['x-a'], 'one', 'request value recorded for x-a')
+  t.equal(value.vary['x-b'], 'two', 'request value recorded for x-b')
+  t.equal(value.vary['x-c'], null, 'absent request header recorded as null sentinel')
+})
+
+test('cache: Vary array containing "*" is not cached', async (t) => {
+  const store = makeRecordingStore()
+  const inner = makeInnerHandler()
+  const handler = new CacheHandler(
+    { origin: 'http://example.local', path: '/', method: 'GET', headers: {} },
+    { store, handler: inner },
+  )
+
+  handler.onConnect(() => {})
+  handler.onHeaders(200, { 'cache-control': 'max-age=60', vary: ['x-a', '*'] }, () => {})
+  handler.onData(Buffer.from('body'))
+  handler.onComplete(null)
+
+  t.equal(store.sets.length, 0, 'wildcard member inside array Vary declines storage')
+})
+
+test('cache: Vary array with a non-string member is not cached', async (t) => {
+  const store = makeRecordingStore()
+  const inner = makeInnerHandler()
+  const handler = new CacheHandler(
+    { origin: 'http://example.local', path: '/', method: 'GET', headers: {} },
+    { store, handler: inner },
+  )
+
+  handler.onConnect(() => {})
+  // A non-string entry is a genuinely invalid shape — parseVary returns null.
+  handler.onHeaders(200, { 'cache-control': 'max-age=60', vary: ['x-a', 42] }, () => {})
+  handler.onData(Buffer.from('body'))
+  handler.onComplete(null)
+
+  t.equal(store.sets.length, 0, 'non-string member inside array Vary declines storage')
+})
+
 // ---------------------------------------------------------------------------
 // CacheHandler store-time header stripping
 // ---------------------------------------------------------------------------

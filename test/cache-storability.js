@@ -791,7 +791,13 @@ test('store: re-caching a key supersedes the old row instead of accumulating', a
   const db = new DatabaseSync(dbPath, { readOnly: true })
   const table = db
     .prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'cacheInterceptorV%'`,
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table'
+         AND name GLOB 'cacheInterceptorV[0-9]*'
+         AND substr(name, length('cacheInterceptorV') + 1) NOT GLOB '*[^0-9]*'
+       ORDER BY CAST(substr(name, length('cacheInterceptorV') + 1) AS INTEGER) DESC
+       LIMIT 1`,
     )
     .get().name
   const { c } = db

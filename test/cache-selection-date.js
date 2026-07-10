@@ -46,6 +46,58 @@ test('store chooses the most recent matching response by Date, not write order',
   t.equal(store.get(key).body.toString(), 'newer', 'ordering is stable after the batch flush')
 })
 
+test('duplicate case-insensitive Date fields fall back to receipt time', async (t) => {
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+
+  const key = {
+    origin: 'https://example.com',
+    method: 'GET',
+    path: '/duplicate-date',
+    headers: { accept: 'text/plain' },
+  }
+  const now = Date.now()
+  const value = (body, headers, vary) => ({
+    body: Buffer.from(body),
+    start: 0,
+    end: body.length,
+    statusCode: 200,
+    statusMessage: 'OK',
+    headers,
+    cacheControlDirectives: { 'max-age': 3600 },
+    vary,
+    cachedAt: now,
+    staleAt: now + 3600e3,
+    deleteAt: now + 7200e3,
+  })
+
+  store.set(key, value('dated', { date: new Date(now - 60e3).toUTCString() }, {}))
+  await flush()
+  store.set(
+    key,
+    value(
+      'ambiguous',
+      {
+        Date: new Date(now - 120e3).toUTCString(),
+        date: new Date(now - 180e3).toUTCString(),
+      },
+      { accept: 'text/plain' },
+    ),
+  )
+
+  t.equal(
+    store.get(key).body.toString(),
+    'ambiguous',
+    'ambiguous Date metadata uses the newer receipt time while pending',
+  )
+  await flush()
+  t.equal(
+    store.get(key).body.toString(),
+    'ambiguous',
+    'the receipt-time fallback survives persistence',
+  )
+})
+
 test('pending replacements immediately supersede their persisted representation', async (t) => {
   const store = new SqliteCacheStore({ location: ':memory:' })
   t.teardown(() => store.close())

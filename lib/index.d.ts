@@ -23,6 +23,7 @@ export interface BodyReadable extends Readable {
 export type URLLike = string | URL | URLObject
 export type HeaderInput =
   Record<string, string | string[] | null | undefined> | (Buffer | string | (Buffer | string)[])[]
+export type OriginLike = URLLike | readonly URLLike[]
 
 export interface Dispatcher {
   dispatch(opts: object, handler: DispatchHandler): void
@@ -75,7 +76,7 @@ export type BodyFactory = (opts: {
 
 export interface DispatchOptions {
   id?: string | null
-  origin?: string | null
+  origin?: OriginLike | null
   path?: string | null
   method?: string | null
   body?: Readable | Uint8Array | string | BodyFactory | null
@@ -134,7 +135,7 @@ export type RetryFn = (
 export type FollowFn = (location: string, count: number, opts: DispatchOptions) => boolean
 
 export type LookupFn = (
-  origin: string | URLLike | Array<string | URLLike>,
+  origin: OriginLike,
   opts: { signal?: AbortSignal },
   callback: (err: Error | null, address: string | null) => void,
 ) => void | Promise<string>

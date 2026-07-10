@@ -2,7 +2,7 @@ import { test } from 'tap'
 import { compose, interceptors } from '../lib/index.js'
 
 test('retry: an unexpected resume status reports the current response headers', async (t) => {
-  t.plan(8)
+  t.plan(9)
 
   const firstError = Object.assign(new Error('socket closed'), { code: 'ECONNRESET' })
   const retryHeaders = {
@@ -63,5 +63,6 @@ test('retry: an unexpected resume status reports the current response headers', 
   t.equal(err.res.statusCode, 503, 'response metadata identifies the current attempt')
   t.same(err.res.headers, retryHeaders, 'response metadata contains the current attempt headers')
   t.equal(err.res.trailers, null, 'trailers are null because the attempt ended at headers')
+  t.equal(err.body, undefined, 'no stale buffered body is attached to the terminal error')
   t.equal(err.cause, firstError, 'the failure that triggered the resume remains the cause')
 })

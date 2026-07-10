@@ -84,6 +84,7 @@ test('gating: TRACE is safe â€” never cached and does not invalidate (RFC 9110 Â
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const base = { origin: origin(server), path: '/', headers: {}, cache: { store } }
 
@@ -114,6 +115,7 @@ test('gating: OPTIONS response is never stored', async (t) => {
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const base = {
     origin: origin(server),
@@ -231,6 +233,7 @@ test('307: a 307 with explicit freshness is stored and served from cache', async
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const base = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
 
@@ -256,6 +259,7 @@ test('307: without explicit freshness a 307 is not cached (no heuristic for redi
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   // Opt into heuristics + a defaultTTL to prove neither rescues a bare 307.
   const dispatch = makeDispatch()
   const base = {

@@ -381,6 +381,43 @@ test('cache: If-None-Match as array is treated as one list, does not crash', asy
   t.equal(hits, 1, 'non-matching array does not contact the origin')
 })
 
+test('cache: caller preconditions are ignored for a fresh cached redirect', async (t) => {
+  t.plan(5)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(307, {
+      'cache-control': 'max-age=60',
+      etag: '"redirect-v1"',
+      location: '/target',
+    })
+    res.end('redirect-body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, { ...base, headers: {} })
+  await new Promise((resolve) => setImmediate(resolve))
+  const result = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'if-none-match': '"redirect-v1"' },
+  })
+
+  t.equal(result.statusCode, 307, 'matching precondition did not synthesize a 304')
+  t.equal(result.headers.location, '/target', 'stored redirect metadata was preserved')
+  t.equal(result.headers.etag, '"redirect-v1"', 'redirect validator was preserved')
+  t.equal(result.body, 'redirect-body', 'stored redirect body was served normally')
+  t.equal(hits, 1, 'fresh redirect came from the cache')
+})
+
 // ---------------------------------------------------------------------------
 // get/set key asymmetry: the set path normalized the key via makeCacheKey
 // (origin.toString()) while the get path used raw opts, so a URL-object origin

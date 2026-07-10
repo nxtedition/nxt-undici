@@ -135,7 +135,7 @@ export type LookupFn = (
   origin: string | URLLike | Array<string | URLLike>,
   opts: { signal?: AbortSignal },
   callback: (err: Error | null, address: string | null) => void,
-) => void | Promise<string>
+) => void | string | Promise<void | string>
 
 export interface ProxyOptions {
   httpVersion?: string

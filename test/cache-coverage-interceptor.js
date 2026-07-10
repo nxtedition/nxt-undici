@@ -760,12 +760,21 @@ test('cache: makeKey preserves non-default ports and distinct hosts', async (t) 
     ['http://example.com:8080', 'http://example.com:8080'],
     // http default port elided, but https on the same host stays distinct.
     ['http://example.com:80', 'http://example.com'],
+    // Distinct hosts must not collapse onto one key.
+    ['https://other.example.com', 'https://other.example.com'],
   ]
   for (const [origin, expected] of cases) {
     const store = makeRecordingStore()
     driveOrigin(origin, store)
     t.equal(store.sets[0].key.origin, expected, `${origin} -> ${expected}`)
   }
+
+  // Two different hosts produce two different keys (no fragmentation is fine;
+  // COLLISION would be a poisoning bug).
+  const store = makeRecordingStore()
+  driveOrigin('https://a.example.com', store)
+  driveOrigin('https://b.example.com', store)
+  t.not(store.sets[0].key.origin, store.sets[1].key.origin, 'distinct hosts key distinctly')
 })
 
 // ---------------------------------------------------------------------------

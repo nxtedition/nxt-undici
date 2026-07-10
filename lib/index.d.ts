@@ -301,7 +301,7 @@ export interface CacheStore {
  *  upgrade attempt rejects with InvalidArgumentError — use dispatch() instead. */
 export interface RequestOptions extends Omit<DispatchOptions, 'upgrade'> {
   url?: URLLike | null
-  dispatch?: DispatchFn | null
+  dispatch?: DispatchFn | Dispatcher | null
   dispatcher?: Dispatcher | null
   /** highWaterMark for the response body readable (non-negative number). */
   highWaterMark?: number | null

@@ -13,9 +13,10 @@ test('pressure: a client abort with a custom reason is not an origin error', (t)
 
   const dispatch = pressure((opts, handler) => {
     wrappedHandler = handler
-    handler.onConnect((reason) => {
+    const onAbort = (reason) => {
       t.equal(reason.message, 'cancelled by caller', 'custom reason reaches the dispatcher')
-    })
+    }
+    handler.onConnect(onAbort)
   })
 
   dispatch(

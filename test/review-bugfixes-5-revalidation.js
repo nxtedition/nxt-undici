@@ -163,6 +163,38 @@ test('304 with a non-matching ETag does not freshen the entry or adopt the valid
   t.end()
 })
 
+test('304 with a duplicated (array) ETag does not evade the identification guard', async (t) => {
+  let hits = 0
+  const seenINM = []
+  const server = await startServer((req, res) => {
+    hits++
+    seenINM.push(req.headers['if-none-match'] ?? null)
+    // Two ETag field lines (malformed) — undici parses them into an array.
+    res.setHeader('etag', ['"v2"', '"v3"'])
+    res.setHeader('cache-control', 'max-age=60')
+    res.writeHead(304)
+    res.end()
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const opts = { origin: origin(server), method: 'GET', path: '/x', headers: {}, cache: { store } }
+
+  seedStale(store, origin(server), { etag: '"v1"' })
+  await settle()
+
+  const res1 = await rawRequest(dispatch, opts)
+  t.equal(res1.statusCode, 200, 'stored entry served for the validated use')
+
+  await settle()
+  await rawRequest(dispatch, opts)
+  t.equal(hits, 2, 'entry was NOT freshened despite the array-shaped mismatching ETag')
+  t.equal(seenINM[1], '"v1"', 'the mismatching validator was NOT adopted')
+  t.end()
+})
+
 test('304 withdrawing cacheability (no-store) closes the max-stale window on the stored entry', async (t) => {
   let hits = 0
   const server = await startServer((req, res) => {

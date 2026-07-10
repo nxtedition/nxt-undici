@@ -37,7 +37,7 @@ async function startServer(handler) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-for (const directive of ['private="etag"']) {
+for (const directive of ['private="ETag"']) {
   test(`qualified ${directive} excludes ETag from stored validator metadata`, async (t) => {
     const server = await startServer((req, res) => {
       res.writeHead(200, {
@@ -69,7 +69,7 @@ for (const directive of ['private="etag"']) {
   })
 }
 
-for (const directive of ['private="etag"']) {
+for (const directive of ['private="ETag"']) {
   test(`a 304 adding qualified ${directive} clears the stored validator`, async (t) => {
     let hits = 0
     const server = await startServer((req, res) => {

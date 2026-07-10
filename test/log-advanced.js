@@ -411,3 +411,83 @@ test('log: onUpgrade logs the upgrade response and forwards socket to handler', 
   )
   t.ok(true, 'onUpgrade forwarded to user handler')
 })
+
+test('log: a terminal retry status overrides a stale response status', async (t) => {
+  let attempts = 0
+  let failed
+  const docs = []
+  const trace = {
+    write(data, op) {
+      docs.push({ ...data, op })
+    },
+  }
+  const logger = {
+    child() {
+      return this
+    },
+    debug() {},
+    warn() {},
+    error(data, message) {
+      if (message === 'upstream request failed') {
+        failed = data
+      }
+    },
+  }
+  const dispatch = compose(
+    (opts, handler) => {
+      attempts++
+      handler.onConnect(() => {})
+
+      if (attempts === 1) {
+        handler.onHeaders(
+          200,
+          { etag: '"same"', 'content-length': '10', 'x-attempt': 'first' },
+          () => {},
+        )
+        handler.onData(Buffer.from('hello'))
+        handler.onError(Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }))
+      } else {
+        // response-retry hides a body-resume response's headers from outer
+        // handlers and reports its status on the terminal error instead.
+        handler.onHeaders(503, { 'x-attempt': 'second' }, () => {})
+      }
+    },
+    interceptors.responseRetry(),
+    interceptors.log(),
+  )
+
+  await new Promise((resolve, reject) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+        retry: () => true,
+        logger,
+        trace,
+      },
+      {
+        onConnect() {},
+        onHeaders() {
+          return true
+        },
+        onData() {},
+        onComplete() {
+          reject(new Error('request unexpectedly completed'))
+        },
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(attempts, 2, 'made the original request and one body-resume attempt')
+  t.equal(failed?.ures.statusCode, 503, 'logs the status that caused the terminal error')
+  t.equal(
+    failed?.ures.headers?.['x-attempt'],
+    'first',
+    'keeps the headers exposed for the logical response',
+  )
+  const end = docs.find((doc) => doc.op === 'undici:request' && doc.phase === 'end')
+  t.equal(end?.statusCode, 503, 'request end trace uses the terminal error status')
+})

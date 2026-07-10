@@ -81,6 +81,30 @@ test('batch read-through: expired batch entry is not returned by get()', (t) => 
   t.end()
 })
 
+test('expired pending replacement immediately shadows an older DB row', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  const key = makeKey({ path: '/pending-tombstone' })
+  store.set(key, makeValue({ body: Buffer.from('old'), end: 3 }))
+  await flush()
+  t.equal(store.get(key).body.toString(), 'old')
+
+  const past = Date.now() - 10e3
+  store.set(
+    key,
+    makeValue({
+      body: Buffer.from('old'),
+      end: 3,
+      cachedAt: past - 1,
+      staleAt: past,
+      deleteAt: past,
+    }),
+  )
+  t.equal(store.get(key), undefined, 'tombstone takes effect before its batched flush')
+  t.end()
+})
+
 test('batch read-through: vary matching is applied to batch entries', (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
@@ -947,6 +971,19 @@ test('cacheControlDirectives stored and retrieved', async (t) => {
   t.end()
 })
 
+test('authorization request provenance stored and retrieved', async (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  store.set(makeKey({ path: '/auth-provenance' }), makeValue({ authorizationRequest: true }))
+  store.set(makeKey({ path: '/anonymous-provenance' }), makeValue({ authorizationRequest: false }))
+  await flush()
+
+  t.equal(store.get(makeKey({ path: '/auth-provenance' })).authorizationRequest, true)
+  t.equal(store.get(makeKey({ path: '/anonymous-provenance' })).authorizationRequest, false)
+  t.end()
+})
+
 test('cachedAt, deleteAt round-trip', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())
@@ -974,6 +1011,7 @@ test('result omits undefined optional fields when not set', async (t) => {
   t.equal(result.vary, undefined)
   t.equal(result.headers, undefined)
   t.equal(result.cacheControlDirectives, undefined)
+  t.equal(result.authorizationRequest, undefined)
   t.end()
 })
 
@@ -1139,6 +1177,17 @@ test('assertCacheValue — throws on non-object vary', (t) => {
   t.throws(
     () => store.set(makeKey(), makeValue({ vary: 'bad' })),
     /expected value.vary to be object/,
+  )
+  t.end()
+})
+
+test('assertCacheValue — throws on non-boolean authorization provenance', (t) => {
+  const store = new SqliteCacheStore()
+  t.teardown(() => store.close())
+
+  t.throws(
+    () => store.set(makeKey(), makeValue({ authorizationRequest: 'yes' })),
+    /expected value.authorizationRequest to be boolean/,
   )
   t.end()
 })

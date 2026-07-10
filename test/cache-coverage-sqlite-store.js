@@ -1048,6 +1048,7 @@ test('makeResult maps every field for a fully populated DB row', async (t) => {
       etag: '"tag"',
       vary: { 'accept-encoding': 'gzip' },
       cacheControlDirectives: { 'max-age': 60, public: true },
+      authorizationRequest: true,
       cachedAt: now,
       staleAt: now + 60e3,
       deleteAt: now + 120e3,
@@ -1064,6 +1065,7 @@ test('makeResult maps every field for a fully populated DB row', async (t) => {
   t.equal(r.etag, '"tag"')
   t.strictSame(r.vary, { 'accept-encoding': 'gzip' })
   t.strictSame(r.cacheControlDirectives, { 'max-age': 60, public: true })
+  t.equal(r.authorizationRequest, true)
   t.equal(r.cachedAt, now)
   t.equal(r.staleAt, now + 60e3)
   t.equal(r.deleteAt, now + 120e3)
@@ -1086,6 +1088,7 @@ test('makeResult leaves optional fields undefined for a minimal row (null body)'
   t.equal(r.etag, undefined)
   t.equal(r.vary, undefined)
   t.equal(r.cacheControlDirectives, undefined)
+  t.equal(r.authorizationRequest, undefined)
   t.end()
 })
 

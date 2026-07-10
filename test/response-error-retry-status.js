@@ -177,6 +177,6 @@ test('response error tolerates primitive inner response metadata', async (t) => 
   })
 
   t.equal(err, innerError, 'forwards the original error')
-  t.same(err.res, { statusCode: undefined, headers: undefined, trailers: undefined })
+  t.strictSame(err.res, { statusCode: undefined, headers: null, trailers: undefined })
   t.equal(err.req.origin, 'http://example.test', 'still decorates request metadata')
 })

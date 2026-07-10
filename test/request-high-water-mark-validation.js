@@ -16,5 +16,13 @@ test('RequestHandler rejects highWaterMark values that Node streams reject', (t)
   t.doesNotThrow(
     () => new RequestHandler({ method: 'GET', body: null, highWaterMark: 1 }, () => {}),
   )
+  t.doesNotThrow(
+    () =>
+      new RequestHandler(
+        { method: 'GET', body: null, highWaterMark: Number.MAX_SAFE_INTEGER + 1 },
+        () => {},
+      ),
+    'accepts the same non-safe integer values as Node streams',
+  )
   t.end()
 })

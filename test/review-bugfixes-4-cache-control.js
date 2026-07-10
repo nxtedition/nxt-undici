@@ -58,6 +58,25 @@ test('parseCacheControl - array value is combined and parsed', (t) => {
   t.end()
 })
 
+test('parseCacheControl - commas inside extension quoted strings stay data', (t) => {
+  t.strictSame(
+    parseCacheControl('example="x, max-age=31536000, public"'),
+    {},
+    'an unknown extension cannot inject freshness or shared-cache permission',
+  )
+  t.strictSame(
+    parseCacheControl('example="x, no-store", max-age=60'),
+    { 'max-age': 60 },
+    'quoted directive-shaped text is ignored while the following real directive is parsed',
+  )
+  t.strictSame(
+    parseCacheControl('no-cache="set-cookie, x-secret", max-age=60'),
+    { 'no-cache': ['set-cookie', 'x-secret'], 'max-age': 60 },
+    'qualified field-name lists still split their quoted argument',
+  )
+  t.end()
+})
+
 test('parseCacheControl - single-element array', (t) => {
   t.strictSame(parseCacheControl(['no-store']), { 'no-store': true })
   t.end()

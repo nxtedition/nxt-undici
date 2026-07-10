@@ -110,6 +110,37 @@ test('if-match/if-unmodified-since/if-range bypass without paying the store look
   t.end()
 })
 
+test('conditional bypass honors only-if-cached: 504 without contacting the origin', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {})
+    res.end('origin-body')
+  })
+  t.teardown(() => server.close())
+
+  const store = {
+    get() {
+      return undefined
+    },
+    set() {},
+  }
+  const dispatch = makeDispatch()
+
+  for (const header of ['if-match', 'if-unmodified-since', 'if-range']) {
+    const res = await rawRequest(dispatch, {
+      origin: origin(server),
+      method: 'GET',
+      path: '/x',
+      headers: { [header]: '"v1"', 'cache-control': 'only-if-cached' },
+      cache: { store },
+    })
+    t.equal(res.statusCode, 504, `${header} + only-if-cached: synthetic 504`)
+  }
+  t.equal(hits, 0, 'origin never contacted under only-if-cached')
+  t.end()
+})
+
 test('fresh 206 entry from a range-unaware store is not served to a non-range request', async (t) => {
   let hits = 0
   const server = await startServer((req, res) => {

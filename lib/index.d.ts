@@ -63,11 +63,7 @@ export type { TraceWriter } from '@nxtedition/trace'
 import type { TraceWriter } from '@nxtedition/trace'
 
 export type BodyFactoryResult =
-  | Readable
-  | Uint8Array
-  | string
-  | Iterable<unknown>
-  | AsyncIterable<unknown>
+  Readable | Uint8Array | string | Iterable<unknown> | AsyncIterable<unknown>
 
 /** Called with an options object (not a bare signal); the signal aborts when the
  *  request is destroyed before the factory resolves. May be async. */
@@ -362,7 +358,17 @@ export const cache: {
 }
 
 export class SqliteCacheStore implements CacheStore {
-  constructor(opts?: { location?: string; db?: Record<string, unknown>; maxSize?: number })
+  constructor(opts?: {
+    location?: string
+    db?: Record<string, unknown>
+    maxSize?: number
+    /** Per-store default entry-size cap, exposed as the maxEntrySize getter
+     *  (falls back to the interceptor's 128KB default when omitted). */
+    maxEntrySize?: number
+    /** Per-store default TTL cap in seconds, exposed as the maxEntryTTL
+     *  getter (falls back to the interceptor's 30-day default when omitted). */
+    maxEntryTTL?: number
+  })
   get(key: CacheKey): CacheGetResult | undefined
   set(
     key: CacheKey,
@@ -372,7 +378,10 @@ export class SqliteCacheStore implements CacheStore {
   delete(key: CacheKey): void
   gc(): void
   clear(): void
+  /** Idempotent. */
   close(): void
+  readonly maxEntrySize: number | undefined
+  readonly maxEntryTTL: number | undefined
 }
 
 export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from '@nxtedition/undici'

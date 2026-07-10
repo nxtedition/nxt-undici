@@ -2081,8 +2081,8 @@ test('cache: If-None-Match with weak etag comparison returns 304', async (t) => 
   t.equal(hits, 1, 'server not contacted')
 })
 
-test('cache: If-None-Match with non-matching etag bypasses to origin', async (t) => {
-  t.plan(1)
+test('cache: If-None-Match with non-matching etag serves the stored 200', async (t) => {
+  t.plan(3)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
@@ -2107,12 +2107,15 @@ test('cache: If-None-Match with non-matching etag bypasses to origin', async (t)
 
   await rawRequest(dispatch, base)
 
-  // Non-matching etag should bypass cache and hit origin.
-  await rawRequest(dispatch, {
+  // RFC 9110 §13.1.2: a non-matching If-None-Match means "proceed as normal".
+  // The entry is fresh, so serve the stored 200 without contacting the origin.
+  const result = await rawRequestWithBody(dispatch, {
     ...base,
     headers: { 'if-none-match': '"different"' },
   })
-  t.equal(hits, 2, 'non-matching etag bypasses to origin')
+  t.equal(result.statusCode, 200, 'non-matching etag serves stored 200')
+  t.equal(result.body, 'ok', 'stored body is served')
+  t.equal(hits, 1, 'origin not contacted for fresh entry')
 })
 
 test('cache: If-None-Match with wildcard * returns 304', async (t) => {
@@ -2183,8 +2186,8 @@ test('cache: If-Modified-Since returns 304 when resource not modified', async (t
   t.equal(hits, 1, 'server not contacted')
 })
 
-test('cache: If-Modified-Since bypasses to origin when resource was modified', async (t) => {
-  t.plan(1)
+test('cache: If-Modified-Since serves the stored 200 when resource was modified', async (t) => {
+  t.plan(3)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
@@ -2209,10 +2212,14 @@ test('cache: If-Modified-Since bypasses to origin when resource was modified', a
 
   await rawRequest(dispatch, base)
 
-  // If-Modified-Since is before Last-Modified — modified since then.
-  await rawRequest(dispatch, {
+  // If-Modified-Since is before Last-Modified — modified since then. RFC 9110
+  // §13.1.3: proceed as normal. The entry is fresh, so serve the stored 200
+  // without contacting the origin.
+  const result = await rawRequestWithBody(dispatch, {
     ...base,
     headers: { 'if-modified-since': 'Wed, 01 Jan 2025 00:00:00 GMT' },
   })
-  t.equal(hits, 2, 'modified resource bypasses to origin')
+  t.equal(result.statusCode, 200, 'modified resource serves stored 200')
+  t.equal(result.body, 'ok', 'stored body is served')
+  t.equal(hits, 1, 'origin not contacted for fresh entry')
 })

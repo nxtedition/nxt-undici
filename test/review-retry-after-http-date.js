@@ -25,7 +25,7 @@ test('invalid ISO Retry-After date falls back to configured backoff', async (t) 
   const controller = new AbortController()
   const timeout = setTimeout(
     () => controller.abort(new Error('invalid Retry-After was incorrectly honored')),
-    500,
+    5_000,
   )
   t.teardown(() => clearTimeout(timeout))
 

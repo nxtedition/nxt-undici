@@ -63,7 +63,7 @@ export type { TraceWriter } from '@nxtedition/trace'
 import type { TraceWriter } from '@nxtedition/trace'
 
 export type BodyFactoryResult =
-  Readable | Uint8Array | string | Iterable<unknown> | AsyncIterable<unknown>
+  Readable | ArrayBuffer | ArrayBufferView | string | Iterable<unknown> | AsyncIterable<unknown>
 
 /** Called with an options object (not a bare signal); the signal aborts when the
  *  request is destroyed before the factory resolves. May be async. */

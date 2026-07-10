@@ -20,15 +20,21 @@ function findTypeScriptFiles(directory) {
     return []
   }
 
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(directory, entry.name)
+  return readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => {
+      if (left.name < right.name) return -1
+      if (left.name > right.name) return 1
+      return 0
+    })
+    .flatMap((entry) => {
+      const path = join(directory, entry.name)
 
-    if (entry.isDirectory()) {
-      return findTypeScriptFiles(path)
-    }
+      if (entry.isDirectory()) {
+        return findTypeScriptFiles(path)
+      }
 
-    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : []
-  })
+      return entry.isFile() && entry.name.endsWith('.ts') ? [path] : []
+    })
 }
 
 const inputs = [

@@ -5,4 +5,5 @@ const options: DispatchOptions = { headers }
 
 parseHeaders()
 parseHeaders(null)
+parseHeaders(headers)
 void options

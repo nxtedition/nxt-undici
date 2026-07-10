@@ -51,3 +51,26 @@ test('priority: an asynchronous dispatch rejection reports onError and releases 
   t.equal(calls, 2, 'a subsequent request is dispatched')
   t.equal(completed, true, 'the released scheduler slot is reusable')
 })
+
+test('priority: a throwing onError does not create an unhandled rejection', async (t) => {
+  const failure = new Error('async dispatch failed')
+  let unhandled
+  const onUnhandledRejection = (err) => {
+    unhandled = err
+  }
+  process.once('unhandledRejection', onUnhandledRejection)
+  t.teardown(() => process.off('unhandledRejection', onUnhandledRejection))
+
+  const dispatch = interceptors.priority()(() => Promise.reject(failure))
+  dispatch(
+    opts,
+    handler({
+      onError() {
+        throw new Error('user onError failed')
+      },
+    }),
+  )
+
+  await new Promise((resolve) => setImmediate(resolve))
+  t.equal(unhandled, undefined)
+})

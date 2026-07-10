@@ -73,11 +73,14 @@ test('parseCacheControl - non-string values return null', (t) => {
 })
 
 test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-negative)', (t) => {
-  t.strictSame(parseCacheControl('max-age=-1'), {}, 'negative max-age dropped')
+  // Malformed max-age/s-maxage surface as explicit 0 ("already expired",
+  // mirroring invalid Expires) rather than absent — absence would fall
+  // through to Expires/heuristics. See review-bugfixes-5-directives.js.
+  t.strictSame(parseCacheControl('max-age=-1'), { 'max-age': 0 }, 'negative max-age -> stale')
   t.strictSame(
     parseCacheControl('s-maxage=-5, max-age=10'),
-    { 'max-age': 10 },
-    'negative dropped, valid kept',
+    { 's-maxage': 0, 'max-age': 10 },
+    'negative s-maxage -> stale, valid max-age kept',
   )
   t.strictSame(parseCacheControl('stale-if-error=-3'), {}, 'negative stale-if-error dropped')
   t.end()
@@ -85,7 +88,10 @@ test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-nega
 
 test('parseCacheControl - valueless directive with explicit = is an invalid qualified form', (t) => {
   t.strictSame(parseCacheControl('public='), {}, 'public= is not treated as public')
-  t.strictSame(parseCacheControl('no-store='), {}, 'no-store= ignored')
+  // no-store is safety-critical: a malformed valued form fails RESTRICTIVE
+  // (treated as bare no-store) — dropping it would fail open and store a
+  // response the origin forbade. See review-bugfixes-5-directives.js.
+  t.strictSame(parseCacheControl('no-store='), { 'no-store': true }, 'no-store= fails restrictive')
   t.strictSame(parseCacheControl('public'), { public: true }, 'bare public still works')
   t.strictSame(parseCacheControl('immutable=x'), {}, 'qualified immutable ignored')
   t.end()
@@ -118,22 +124,26 @@ test('parseCacheControl - whitespace around a delta-seconds value is tolerated (
     { 's-maxage': 60 },
     'space before a quoted value tolerated',
   )
-  t.strictSame(parseCacheControl('max-age= 60junk'), {}, 'garbage after trim still dropped')
+  t.strictSame(
+    parseCacheControl('max-age= 60junk'),
+    { 'max-age': 0 },
+    'garbage after trim surfaces as explicit stale, never parseInt-coerced',
+  )
   t.end()
 })
 
 test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
   t.strictSame(
     parseCacheControl('max-age=60junk'),
-    {},
-    'trailing garbage dropped, not coerced to 60',
+    { 'max-age': 0 },
+    'trailing garbage surfaces as stale, not coerced to 60',
   )
-  t.strictSame(parseCacheControl('max-age=1.5'), {}, 'decimal dropped')
+  t.strictSame(parseCacheControl('max-age=1.5'), { 'max-age': 0 }, 'decimal surfaces as stale')
   t.strictSame(parseCacheControl('max-age="60"'), { 'max-age': 60 }, 'quoted integer still parses')
   t.strictSame(
     parseCacheControl('s-maxage=60x, max-age=10'),
-    { 'max-age': 10 },
-    'malformed s-maxage dropped, valid directive kept',
+    { 's-maxage': 0, 'max-age': 10 },
+    'malformed s-maxage surfaces as stale, valid directive kept',
   )
   t.end()
 })

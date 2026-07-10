@@ -70,7 +70,14 @@ test('parseHttpDate: accepts the three RFC 9110 formats, rejects everything else
   t.equal(parseHttpDate('Sunday, 06-Nov-94 08:49:37 GMT')?.getTime(), expected, 'RFC 850')
   t.equal(parseHttpDate('Sun Nov  6 08:49:37 1994')?.getTime(), expected, 'asctime')
   t.equal(parseHttpDate('0'), undefined, 'Expires: 0 is invalid')
-  t.equal(parseHttpDate('Mon, 06 Nov 1994 08:49:37 GMT'), undefined, 'wrong weekday')
+  // Recipient leniency: a mismatched weekday NAME no longer rejects the date
+  // (the numeric fields determine the moment; buggy origins exist) — see
+  // review-bugfixes-5-directives.js.
+  t.equal(
+    parseHttpDate('Mon, 06 Nov 1994 08:49:37 GMT')?.getTime(),
+    expected,
+    'wrong weekday tolerated',
+  )
   t.equal(parseHttpDate('Wed, 30 Feb 2022 00:00:00 GMT'), undefined, 'nonexistent date')
   t.equal(parseHttpDate('2026-07-04T00:00:00Z'), undefined, 'ISO 8601 is not an HTTP date')
   t.equal(parseHttpDate(123), undefined, 'non-string')

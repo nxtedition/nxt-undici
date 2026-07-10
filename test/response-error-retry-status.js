@@ -22,8 +22,10 @@ test('response error preserves the terminal body-resume status', async (t) => {
         // response-retry does not expose these resume headers after the first
         // response's headers have reached the caller. It instead reports this
         // attempt's status on the terminal error.
-        handler.onHeaders(503, { 'x-attempt': 'second' }, () => {})
-        handler.onComplete([])
+        const shouldContinue = handler.onHeaders(503, { 'x-attempt': 'second' }, () => {})
+        if (shouldContinue !== false) {
+          handler.onComplete([])
+        }
       }
     },
     interceptors.responseRetry(),

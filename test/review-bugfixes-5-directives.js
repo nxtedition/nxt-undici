@@ -98,9 +98,14 @@ test('parseCacheControl: malformed valued no-store/must-revalidate/proxy-revalid
     { 'proxy-revalidate': true },
     'proxy-revalidate= fails restrictive',
   )
-  // Permission-granting valueless directives keep the opposite (drop) rule.
+  // Permission-granting valueless directives keep the opposite (drop) rule,
+  // except immutable, whose own specification says to ignore arguments.
   t.strictSame(parseCacheControl('public='), {}, 'public= still ignored')
-  t.strictSame(parseCacheControl('immutable=x'), {}, 'immutable=x still ignored')
+  t.strictSame(
+    parseCacheControl('immutable=x'),
+    { immutable: true },
+    'immutable argument is ignored, not the directive (RFC 8246 §2)',
+  )
   t.end()
 })
 

@@ -315,6 +315,52 @@ test('304 must-understand overrides its paired no-store fallback', async (t) => 
   t.end()
 })
 
+test('304 changing Vary expires the selected row under its old selector', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    if (req.headers['if-none-match']) {
+      res.writeHead(304, {
+        etag: '"v1"',
+        'cache-control': 'max-age=60',
+        vary: 'accept-language',
+      })
+      res.end()
+    } else {
+      res.writeHead(200, { 'cache-control': 'no-store' })
+      res.end('french-body')
+    }
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), method: 'GET', path: '/x', cache: { store } }
+
+  // This selected row predates Vary, so it currently matches every language.
+  seedStale(store, origin(server), { etag: '"v1"', body: 'english-body' })
+  await settle()
+
+  const english = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'accept-language': 'en' },
+  })
+  t.equal(english.body, 'english-body', 'the matching 304 validates this use')
+  t.equal(hits, 1)
+  await settle()
+
+  // The freshened en row no longer matches. The pre-304 no-Vary row must not
+  // remain as a stale fallback, or max-stale leaks the en representation to fr.
+  const french = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'accept-language': 'fr', 'cache-control': 'max-stale=600' },
+  })
+  t.equal(hits, 2, 'the obsolete no-Vary row was not reused')
+  t.equal(french.body, 'french-body', 'the other variant came from the origin')
+  t.end()
+})
+
 test('freshened entry body is not aliased with the chunk delivered to the user', async (t) => {
   const server = await startServer((req, res) => {
     res.writeHead(304, { etag: '"v1"', 'cache-control': 'max-age=60' })

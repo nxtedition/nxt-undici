@@ -734,14 +734,22 @@ test('cache: makeKey canonicalizes equivalent origins onto one key', async (t) =
     'https://Example.Com:443',
     new URL('https://example.com'),
   ]
+  // One shared store for every variant: fragmentation is a property of the
+  // WHOLE key (origin + method + path + headers), not just the origin, so
+  // strictSame every produced key against the first — a mismatch in any field
+  // is what splits equivalent URIs into separate entries.
+  const store = makeRecordingStore()
   for (const origin of equivalents) {
-    const store = makeRecordingStore()
     driveOrigin(origin, store)
-    t.equal(store.sets.length, 1, `entry stored for ${origin}`)
-    t.equal(
-      store.sets[0].key.origin,
-      'https://example.com',
-      `origin ${origin} normalized to https://example.com`,
+  }
+  t.equal(store.sets.length, equivalents.length, 'every variant produced a store set')
+  const first = store.sets[0].key
+  t.equal(first.origin, 'https://example.com', 'origin normalized to https://example.com')
+  for (let i = 1; i < store.sets.length; i++) {
+    t.strictSame(
+      store.sets[i].key,
+      first,
+      `key for ${equivalents[i]} is identical to ${equivalents[0]}`,
     )
   }
 })

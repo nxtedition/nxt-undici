@@ -1175,6 +1175,14 @@ test('cache: isEtagUsable rejects non-string etags', async (t) => {
   t.equal(isEtagUsable(123), false)
   t.equal(isEtagUsable(['"a"']), false)
   t.equal(isEtagUsable('"a"'), true, 'control: a normal quoted etag is usable')
+  t.equal(isEtagUsable('""'), true, 'opaque-tag permits zero etagc characters')
+  t.equal(isEtagUsable('W/""'), true, 'the empty weak entity-tag is valid')
+  t.equal(isEtagUsable('"a,b\\c"'), true, 'comma and backslash are valid etagc')
+  t.equal(isEtagUsable('"\x80"'), true, 'obs-text is valid etagc')
+  t.equal(isEtagUsable('"a b"'), false, 'space is not etagc')
+  t.equal(isEtagUsable('"a"b"'), false, 'an embedded quote is not etagc')
+  t.equal(isEtagUsable('"\x7f"'), false, 'DEL is not etagc')
+  t.equal(isEtagUsable('w/"a"'), false, 'the weak prefix is case-sensitive')
 })
 
 test('cache: serveFromCache tags absent id/method as null in the lookup doc', async (t) => {

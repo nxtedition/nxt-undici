@@ -367,6 +367,38 @@ test('range: HEAD response with Content-Range is not stored', async (t) => {
 // Staleness, revalidation and conditional interplay
 // ---------------------------------------------------------------------------
 
+test('range: cached 206 synthetic 304 omits partial-only metadata', async (t) => {
+  t.plan(6)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(206, {
+      'cache-control': 'max-age=60',
+      'content-range': 'bytes 2-5/10',
+      'content-length': '4',
+      etag: '"tag-1"',
+    })
+    res.end('2345')
+  })
+  t.teardown(server.close.bind(server))
+  const dispatch = makeDispatch()
+  const { base } = makeOpts(t, server)
+
+  await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  await flush()
+
+  const conditional = await rawRequest(dispatch, {
+    ...base,
+    headers: { range: 'bytes=2-5', 'if-none-match': '"tag-1"' },
+  })
+  t.equal(conditional.statusCode, 304, 'matching condition answered locally')
+  t.equal(conditional.body, '', '304 has no body')
+  t.notOk(conditional.headers['content-range'], 'Content-Range was not copied onto a 304')
+  t.notOk(conditional.headers['content-length'], 'partial Content-Length was not copied')
+  t.ok(conditional.headers.age !== undefined, 'normal cached-response Age metadata remains')
+  t.equal(hits, 1, 'origin was not contacted for the fresh conditional hit')
+})
+
 test('range: stale 206 is refetched, not conditionally revalidated', async (t) => {
   t.plan(6)
   const origin = rangeServer({ maxAge: 0, etag: '"tag-1"' })

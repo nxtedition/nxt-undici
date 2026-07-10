@@ -125,11 +125,21 @@ test('recovers from a truncated/corrupt SQLite header', async (t) => {
   fs.writeSync(fd, Buffer.alloc(64, 0xff), 0, 64, 16)
   fs.closeSync(fd)
 
-  const { result: store, dispose } = await withWarnings(
-    async () => new SqliteCacheStore({ location: dbPath }),
-  )
+  const {
+    result: store,
+    warnings,
+    dispose,
+  } = await withWarnings(async () => new SqliteCacheStore({ location: dbPath }))
   t.teardown(dispose)
   t.teardown(() => store.close())
+
+  // Assert the recovery path actually fired — otherwise this test could pass
+  // trivially (the /a key isn't seeded) even if the header corruption didn't
+  // surface as NOTADB/CORRUPT on some platform/SQLite build.
+  t.ok(
+    await waitFor(() => warnings.some((w) => /corrupt database/i.test(String(w?.message ?? w)))),
+    'emitted a corruption warning (recovery path exercised)',
+  )
 
   store.set(makeKey({ path: '/a' }), makeValue({ body: Buffer.from('world'), end: 5 }))
   await flush()

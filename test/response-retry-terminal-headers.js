@@ -61,7 +61,7 @@ test('retry: an unexpected resume status reports the current response headers', 
   t.equal(attempts, 2, 'one initial request and one resume request were dispatched')
   t.equal(err.statusCode, 503, 'the current attempt status remains available at top level')
   t.equal(err.res.statusCode, 503, 'response metadata identifies the current attempt')
-  t.equal(err.res.headers, retryHeaders, 'response metadata contains the current attempt headers')
+  t.same(err.res.headers, retryHeaders, 'response metadata contains the current attempt headers')
   t.equal(err.res.trailers, null, 'trailers are null because the attempt ended at headers')
   t.equal(err.cause, firstError, 'the failure that triggered the resume remains the cause')
 })

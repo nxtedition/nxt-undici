@@ -702,8 +702,7 @@ test('cache: valid double-quoted etag is stored and returned from cache', async 
   t.equal(entry.etag, '"abc123"', 'valid etag stored and returned')
 })
 
-test('cache: empty-string etag is not treated as usable; stored as empty string', async (t) => {
-  // isEtagUsable('""') returns false (length <= 2), so cache stores '' for the etag.
+test('cache: empty strong etag is valid and stored verbatim', async (t) => {
   t.plan(2)
   const server = await startServer((req, res) => {
     res.writeHead(200, { 'cache-control': 's-maxage=60', etag: '""' })
@@ -729,7 +728,7 @@ test('cache: empty-string etag is not treated as usable; stored as empty string'
     headers: {},
   })
   t.ok(entry, 'entry stored in cache')
-  t.equal(entry.etag, '', 'unusable etag stored as empty string (not the original value)')
+  t.equal(entry.etag, '""', 'the RFC-valid empty opaque tag is retained')
 })
 
 test('cache: weak etag W/"valid" is treated as usable and stored', async (t) => {
@@ -761,8 +760,7 @@ test('cache: weak etag W/"valid" is treated as usable and stored', async (t) => 
   t.equal(entry.etag, 'W/"valid123"', 'weak etag stored')
 })
 
-test('cache: W/"" (empty weak etag) is not usable; stored as empty string', async (t) => {
-  // isEtagUsable('W/""') returns false (length === 4), so cache stores ''.
+test('cache: empty weak etag is valid and stored verbatim', async (t) => {
   t.plan(2)
   const server = await startServer((req, res) => {
     res.writeHead(200, { 'cache-control': 's-maxage=60', etag: 'W/""' })
@@ -788,7 +786,7 @@ test('cache: W/"" (empty weak etag) is not usable; stored as empty string', asyn
     headers: {},
   })
   t.ok(entry, 'entry stored in cache')
-  t.equal(entry.etag, '', 'empty weak etag stored as empty string')
+  t.equal(entry.etag, 'W/""', 'the RFC-valid empty weak opaque tag is retained')
 })
 
 // ---------------------------------------------------------------------------

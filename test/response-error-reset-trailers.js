@@ -26,6 +26,6 @@ test('response-error does not leak trailers across reconnects', (t) => {
 
   t.equal(errors.length, 2)
   t.strictSame(errors[0].res.trailers, { 'x-first-trailer': 'present' })
-  t.equal(errors[1].res.trailers, undefined)
+  t.equal(errors[1].res.trailers, null, 'reset trailers use empty response metadata')
   t.end()
 })

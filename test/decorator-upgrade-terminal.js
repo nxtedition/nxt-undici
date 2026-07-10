@@ -12,6 +12,12 @@ test('DecoratorHandler treats onUpgrade as a terminal callback', (t) => {
     onUpgrade() {
       calls.push('upgrade')
     },
+    onHeaders() {
+      calls.push('headers')
+    },
+    onData() {
+      calls.push('data')
+    },
     onComplete() {
       calls.push('complete')
     },
@@ -26,6 +32,8 @@ test('DecoratorHandler treats onUpgrade as a terminal callback', (t) => {
   })
   decorator.onUpgrade(101, {}, {})
   decorator.onUpgrade(101, {}, {})
+  decorator.onHeaders(200, {}, () => {})
+  decorator.onData(Buffer.from('late data'))
   decorator.onComplete({})
   decorator.onError(new Error('late transport error'))
   wrappedAbort(new Error('late caller abort'))

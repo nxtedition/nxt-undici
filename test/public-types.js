@@ -7,7 +7,8 @@ import { test } from 'tap'
 
 const require = createRequire(import.meta.url)
 const tsc = require.resolve('typescript/bin/tsc')
-const root = fileURLToPath(new URL('..', import.meta.url))
+const testDirectory = dirname(fileURLToPath(import.meta.url))
+const root = resolve(testDirectory, '..')
 const undiciPackagePath = require.resolve('@nxtedition/undici/package.json')
 const undiciPackage = require(undiciPackagePath)
 const undiciTypes = undiciPackage.types ?? undiciPackage.typings

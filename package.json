@@ -45,7 +45,8 @@
       "eslint",
       "prettier --write"
     ],
-    "*.{md,ts}": "prettier --write"
+    "*.md": "prettier --write",
+    "*.{ts,d.ts}": "prettier --write"
   },
   "prettier": {
     "printWidth": 100,

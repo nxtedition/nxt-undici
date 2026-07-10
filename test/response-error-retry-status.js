@@ -146,3 +146,33 @@ test('response error keeps captured metadata when the inner status matches', asy
   t.equal(err.statusCode, 503, 'keeps the matching terminal status')
   t.equal(err.res.headers, headers, 'keeps headers captured for that status')
 })
+
+test('response error tolerates primitive inner response metadata', async (t) => {
+  const innerError = Object.assign(new Error('network failed'), { res: 'unexpected' })
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err, innerError, 'forwards the original error')
+  t.same(err.res, { statusCode: undefined, headers: undefined, trailers: undefined })
+  t.equal(err.req.origin, 'http://example.test', 'still decorates request metadata')
+})

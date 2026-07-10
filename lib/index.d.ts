@@ -303,7 +303,7 @@ export interface RequestOptions extends Omit<DispatchOptions, 'upgrade'> {
   url?: URLLike | null
   dispatch?: DispatchFn | null
   dispatcher?: Dispatcher | null
-  /** highWaterMark for the response body readable (non-negative number). */
+  /** highWaterMark for the response body readable (non-negative integer). */
   highWaterMark?: number | null
 }
 

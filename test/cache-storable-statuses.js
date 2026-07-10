@@ -148,7 +148,7 @@ test('storability: a status this cache declines (500) is not stored even with ex
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // 500 is RFC-cacheable given freshness (§15.1), but outside this cache's
+    // 500 is RFC-storable given freshness (RFC 9111 §3), but outside this cache's
     // stored subset — so even WITH explicit freshness it is deliberately declined.
     res.writeHead(500, { 'cache-control': 'max-age=60' })
     res.end('error')

@@ -616,9 +616,9 @@ test('cache: a status this cache declines (403) is not cached', async (t) => {
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    // 403 is RFC-cacheable given freshness (§15.1), but this cache deliberately
-    // declines it (unlike 404/410) — so it is not stored even with explicit
-    // freshness. See test/cache-storable-statuses.js for the 404/410 path.
+    // 403 is RFC-storable given freshness (RFC 9111 §3), but this cache
+    // deliberately declines it (unlike 404/410) — so it is not stored even with
+    // explicit freshness. See test/cache-storable-statuses.js for the 404/410 path.
     res.writeHead(403, { 'cache-control': 's-maxage=60' })
     res.end('forbidden')
   })

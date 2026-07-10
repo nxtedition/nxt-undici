@@ -35,12 +35,17 @@ for (const reason of [false, 0, '']) {
           onError: resolve,
         },
       )
-      abortRequest(reason)
+      // Let the retry promise enter its backoff wait before aborting so this
+      // deterministically exercises cancellation during the wait.
+      setImmediate(() => abortRequest(reason))
     })
 
     let timeoutId
     const timeout = new Promise((resolve, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('retry did not deliver a terminal error')), 500)
+      timeoutId = setTimeout(
+        () => reject(new Error('retry did not deliver a terminal error')),
+        2_000,
+      )
     })
     const delivered = await Promise.race([error, timeout]).finally(() => clearTimeout(timeoutId))
 

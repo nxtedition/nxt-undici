@@ -83,6 +83,8 @@ export interface DispatchOptions {
   reset?: boolean | null
   blocking?: boolean | null
   timeout?: number | { headers?: number | null; body?: number | null } | null
+  /** Alias for `headersTimeout`. */
+  headerTimeout?: number | null
   headersTimeout?: number | null
   bodyTimeout?: number | null
   idempotent?: boolean | null
@@ -99,8 +101,11 @@ export interface DispatchOptions {
   /** Alias for `follow`; ignored when `follow` is also set. */
   redirect?: number | FollowFn | boolean | null
   error?: boolean | null
+  /** Alias for `error`; ignored when `error` is also set. */
+  throwOnError?: boolean | null
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
+  userAgent?: string | null
   /** Per-request trace writer: undefined falls back to the per-thread writer
    *  installed via @nxtedition/trace's installTrace(), null disables tracing
    *  for this request. */

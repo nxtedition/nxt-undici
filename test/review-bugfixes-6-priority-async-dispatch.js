@@ -23,7 +23,7 @@ function handler(overrides = {}) {
 test('priority: an asynchronous dispatch rejection reports onError and releases the slot', async (t) => {
   const failure = new Error('async dispatch failed')
   let calls = 0
-  const dispatch = interceptors.priority()((request, wrapped) => {
+  const dispatch = interceptors.priority()((_request, wrapped) => {
     calls++
     if (calls === 1) {
       return Promise.reject(failure)

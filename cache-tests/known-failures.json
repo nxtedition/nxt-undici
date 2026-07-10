@@ -1,14 +1,14 @@
 {
   "failures": {},
+  "retries": {},
   "setupFailures": {
-    "conditional-lm-fresh-no-lm": "cache doesn't answer If-Modified-Since from a fresh entry that has no stored Last-Modified (responds-to-conditionals family)",
-    "headers-store-Content-Range": "a 200 carrying a Content-Range header is stored as a range window, invisible to plain requests",
+    "headers-store-Content-Range": "the test's Content-Range value is not a `bytes …/…` byte-range spec, so parseContentRange rejects it and the 200 is refused storage (skip 'content-range') — it is never cached, so the reuse request misses",
     "headers-store-Set-Cookie": "Set-Cookie responses are never stored (shared-cache decision)",
-    "304-etag-update-response-Content-Range": "Content-Range storage quirk keeps the revalidation setup from being established",
+    "304-etag-update-response-Content-Range": "the setup 200's Content-Range is not a `bytes …/…` byte-range spec, so it is refused storage (skip 'content-range'); with nothing cached there is nothing to revalidate, so request 2 is unconditional",
     "304-etag-update-response-Set-Cookie": "Set-Cookie responses are never stored, so there is nothing to revalidate",
     "head-200-update": "HEAD is keyed separately from GET; a HEAD response can't update the GET entry",
     "head-410-update": "HEAD is keyed separately from GET; a HEAD response can't update the GET entry",
-    "partial-use-headers": "206 entries are served only on byte-exact window matches; plain requests can't reuse partial-entry headers",
-    "partial-use-stored-headers": "206 entries are served only on byte-exact window matches; plain requests can't reuse partial-entry headers"
+    "partial-use-headers": "the stored entry is a complete 200; this cache does not slice a sub-range out of a wider stored representation, so the Range request is forwarded to the origin instead of being answered from cache",
+    "partial-use-stored-headers": "the stored entry is a complete 200; this cache does not slice a sub-range out of a wider stored representation, so the Range request is forwarded to the origin instead of being answered from cache"
   }
 }

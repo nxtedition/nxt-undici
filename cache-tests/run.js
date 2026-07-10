@@ -9,12 +9,20 @@
 //   node cache-tests/run.js --suite=partial run one suite (comma-separated ids)
 //   node cache-tests/run.js --id=<test-id>  run a single test with wire dump
 //   node cache-tests/run.js --json          print the raw results object
+//   node cache-tests/run.js --emit-pass-baseline  print pass-baseline.json's
+//                                           entry for the current environment
 //
 // Result semantics follow upstream lib/results.mjs: only `kind: required`
 // (or kind-less) test failures are conformance FAILURES; `optimal` failures
 // and `check` "no"s are informational. Expected failures live in
 // known-failures.json with a reason each; CI fails on any required failure
 // not listed there (and reports stale entries that now pass).
+//
+// Beyond required failures, CI also gates on: setup failures outside the
+// baseline, harness failures, a zero-pass run, any `retried` (duplicate
+// dispatch — this runner composes no retry interceptor, so a retry is a bug)
+// outside known-failures' `retries`, and any regression in the ratcheted set
+// of currently-passing optimal/check tests (pass-baseline.json, per env).
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
@@ -22,7 +30,7 @@ import undici from '@nxtedition/undici'
 import { compose, interceptors, cache as cacheExports } from '../lib/index.js'
 import { createTestServer } from './engine/server.js'
 import { makeTest, rawRequest } from './engine/client.js'
-import { determineTestResult, resultTypes } from './engine/lib/results.mjs'
+import { determineTestResult, resultTypes, testLookup } from './engine/lib/results.mjs'
 import suites from './tests/index.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -30,11 +38,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const CHUNK_SIZE = 25 // matches upstream runner.mjs default
 
 function parseArgs(argv) {
-  const args = { ci: false, json: false, id: null, suite: null, heuristic: false }
+  const args = {
+    ci: false,
+    json: false,
+    id: null,
+    suite: null,
+    heuristic: false,
+    emitPassBaseline: false,
+  }
   for (const arg of argv) {
     if (arg === '--ci') args.ci = true
     else if (arg === '--json') args.json = true
     else if (arg === '--heuristic') args.heuristic = true
+    else if (arg === '--emit-pass-baseline') args.emitPassBaseline = true
     else if (arg.startsWith('--id=')) args.id = arg.slice(5)
     else if (arg.startsWith('--suite=')) args.suite = arg.slice(8).split(',')
     else {
@@ -71,6 +87,20 @@ async function main() {
   const known = JSON.parse(readFileSync(join(__dirname, 'known-failures.json'), 'utf8'))
   const knownFailures = known.failures ?? {}
   const knownSetupFailures = known.setupFailures ?? {}
+  const knownRetries = known.retries ?? {}
+
+  // Pass-ratchet baseline: the optimal/check tests that currently pass, keyed
+  // per environment (heuristic freshness unlocks a superset). A regression —
+  // a baselined test no longer passing — gates CI; new passes only warn (add
+  // them via `--emit-pass-baseline`). Absent/empty baseline disables the gate.
+  const envKey = args.heuristic ? 'heuristic' : 'default'
+  let passBaselineAll = {}
+  try {
+    passBaselineAll = JSON.parse(readFileSync(join(__dirname, 'pass-baseline.json'), 'utf8'))
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err // malformed baseline must not pass silently
+  }
+  const passBaseline = passBaselineAll[envKey] ?? []
 
   const serverHandle = createTestServer()
   const baseUrl = await serverHandle.listen()
@@ -203,9 +233,32 @@ async function main() {
   // Only a genuine pass makes a known-failure entry stale — a setup/harness
   // failure or retry is not "now passing".
   const passedSet = new Set(stats.passed)
-  const staleKnown = [...Object.keys(knownFailures), ...Object.keys(knownSetupFailures)].filter(
-    (id) => passedSet.has(id),
-  )
+  const unexpectedRetries = stats.retried.filter(([id]) => !(id in knownRetries))
+  const staleKnown = [
+    ...Object.keys(knownFailures),
+    ...Object.keys(knownSetupFailures),
+    ...Object.keys(knownRetries),
+  ].filter((id) => passedSet.has(id))
+
+  // Pass-ratchet: the currently-passing optimal/check tests (required passes
+  // are already gated by the required-failure path). `emit-pass-baseline`
+  // prints this set so the baseline can be regenerated per environment.
+  const ratchetPasses = stats.passed
+    .filter((id) => {
+      const kind = testLookup(suites, id).kind
+      return kind === 'optimal' || kind === 'check'
+    })
+    .sort()
+  if (args.emitPassBaseline) {
+    console.log(JSON.stringify(ratchetPasses, null, 2))
+    return
+  }
+  // The ratchet only makes sense against the full suite: a --suite/--id run
+  // sees a subset, so every un-run baseline entry would read as a regression.
+  const isFullRun = !args.suite && args.id == null
+  const ratchetSet = new Set(ratchetPasses)
+  const regressedPasses = isFullRun ? passBaseline.filter((id) => !ratchetSet.has(id)) : []
+  const newlyPassing = isFullRun ? ratchetPasses.filter((id) => !passBaseline.includes(id)) : []
 
   const total = testArray.length
   const pct = (n) => (total ? `${((100 * n) / total).toFixed(1)}%` : '-')
@@ -231,6 +284,12 @@ async function main() {
     for (const [id, detail] of unexpectedSetup) {
       print(`SETUP-FAILED (new): ${id} — ${detail}`)
     }
+    for (const [id, detail] of unexpectedRetries) {
+      print(`RETRIED (new): ${id} — ${detail}`)
+    }
+    for (const id of regressedPasses) {
+      print(`REGRESSED (no longer passing): ${id}`)
+    }
   }
 
   print(`
@@ -247,6 +306,12 @@ async function main() {
   if (staleKnown.length) {
     print(
       `\nWARNING: known-failures entries that now pass (remove them):\n  ${staleKnown.join('\n  ')}`,
+    )
+  }
+  if (newlyPassing.length) {
+    print(
+      `\nWARNING: optimal/check tests now passing but not in pass-baseline.json[${envKey}]` +
+        ` (add via --emit-pass-baseline):\n  ${newlyPassing.join('\n  ')}`,
     )
   }
 
@@ -271,6 +336,21 @@ async function main() {
   }
   if (total > 0 && stats.passed.length === 0) {
     print('\nNo test passed — harness sanity check failed.')
+    process.exitCode = 1
+  }
+  // A `retried` verdict means the cache dispatched a duplicate request (two
+  // identical Req-Num values reached the origin). This runner composes NO
+  // retry interceptor, so a retry is a double-dispatch bug AND silently drops
+  // the test out of verification — gate on any outside known-failures' baseline.
+  if (unexpectedRetries.length) {
+    print(`\n${unexpectedRetries.length} unexpected retried (double-dispatch) test(s).`)
+    process.exitCode = 1
+  }
+  // Pass-ratchet: a baselined optimal/check test that stopped passing is a
+  // silent regression (e.g. RFC 5861 SWR going non-conformant). regressedPasses
+  // is empty on --suite/--id runs (see isFullRun), so this never mis-fires.
+  if (regressedPasses.length) {
+    print(`\n${regressedPasses.length} optimal/check pass-ratchet regression(s).`)
     process.exitCode = 1
   }
 }

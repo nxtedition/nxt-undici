@@ -8,13 +8,23 @@ fork's cache interceptor directly — no `fetch`, no browser
 ## Running
 
 ```sh
-npm run test:cache-tests            # CI mode: quiet, exit 1 on unexpected required failures
+npm run test:cache-tests            # CI: runs BOTH default and --heuristic envs, quiet, exit 1 on any gate
 node cache-tests/run.js             # verbose: every non-pass with its assertion message
 node cache-tests/run.js --suite=partial,stale
 node cache-tests/run.js --id=freshness-max-age   # single test + full wire dump
 node cache-tests/run.js --heuristic # opt-in heuristic-freshness environment
 node cache-tests/run.js --json      # raw per-test results object
+node cache-tests/run.js --emit-pass-baseline              # regenerate pass-baseline.json[default]
+node cache-tests/run.js --heuristic --emit-pass-baseline  # ...and [heuristic]
 ```
+
+CI (`--ci`) exits 1 on any of: an unexpected required-kind failure, a setup
+failure outside the baseline, a harness failure, a zero-pass run, a `retried`
+verdict outside the baseline (a duplicate dispatch — this runner composes no
+retry interceptor, so a retry is a double-dispatch bug that also silently drops
+the test from verification), or a **pass-ratchet regression** (a previously
+passing `optimal`/`check` test that stopped passing). `test:cache-tests` runs
+the gate in both the default and `--heuristic` environments.
 
 ## Layout
 
@@ -31,15 +41,21 @@ node cache-tests/run.js --json      # raw per-test results object
   handler with per-request `cache: { store }`. One shared SQLite `:memory:`
   store per run; tests are isolated by their per-test UUID URL, like upstream.
 - `run.js` — orchestrator: chunked concurrency (25, like upstream), result
-  classification, known-failures gates.
+  classification, known-failures gates, and the pass-ratchet.
 - `known-failures.json` — the CI baseline: `failures` (expected required-kind
   failures, currently **empty** — zero conformance failures in both the
   default and `--heuristic` environments; undici, for comparison, skip-lists
-  15+ tests) and `setupFailures` (tests whose _preconditions_ this cache
-  deliberately doesn't meet, i.e. N/A — each with a reason). CI fails on any
-  required failure or setup failure outside the baseline, on any harness
-  failure, or on a run where nothing passed; it warns about stale entries
-  that now pass.
+  15+ tests), `setupFailures` (tests whose _preconditions_ this cache
+  deliberately doesn't meet, i.e. N/A — each with a reason), and `retries`
+  (baselined duplicate-dispatch tests, currently **empty**). CI fails on any
+  required failure or setup failure or retry outside the baseline, on any
+  harness failure, or on a run where nothing passed; it warns about stale
+  entries that now pass.
+- `pass-baseline.json` — the pass-ratchet: the `optimal`/`check` tests that
+  currently pass, keyed per environment (`default` / `heuristic`). CI fails if
+  any baselined test stops passing (a silent regression, e.g. RFC 5861 SWR
+  going non-conformant) and warns about new passes to add. Regenerate with
+  `--emit-pass-baseline` (once per environment).
 
 Vendored from upstream commit `b555b8d8d13950aaffa396689d38177b3de66bcf`
 (2026-06-23). To re-vendor: copy `tests/` and the four `test-engine/lib`

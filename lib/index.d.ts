@@ -23,7 +23,7 @@ export interface BodyReadable extends Readable {
 export type URLLike = string | URL | URLObject
 
 export interface Dispatcher {
-  dispatch(opts: object, handler: DispatchHandler): void
+  dispatch(opts: DispatchOptions, handler: DispatchHandler): void
 }
 
 export interface DispatchHandler {

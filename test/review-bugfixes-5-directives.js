@@ -11,9 +11,9 @@
 // - present-but-malformed max-age / s-maxage must surface as explicit
 //   lifetime 0 (like invalid Expires), not as absent (which fell through to
 //   Expires / heuristics and over-cached).
-// - immutable's invented 1-year lifetime must be gated to statusCode 200 like
-//   every other non-origin-explicit lifetime (a bare-immutable 307 was cached
-//   for min(1y, maxEntryTTL)).
+// - immutable is an origin-sent directive, so it grants freshness for every
+//   status CacheHandler admits (200/206/307) like a large explicit max-age;
+//   only the cache-invented heuristic/defaultTTL lifetimes stay 200-only.
 // - a response arriving already stale but inside its stale-while-revalidate /
 //   stale-if-error window must be stored even without a validator (RFC 5861
 //   SWR needs no validator).
@@ -201,22 +201,26 @@ test('determineLifetime: malformed max-age no longer falls through to Expires', 
 // freshness.js
 // ---------------------------------------------------------------------------
 
-test('determineLifetime: immutable lifetime is gated to statusCode 200', (t) => {
+test('determineLifetime: immutable applies to every admitted status (like a large max-age)', (t) => {
   const now = Date.now()
+  // immutable is origin-sent, so — like s-maxage/max-age/Expires — it is NOT
+  // status-gated; it grants the same lifetime to every status CacheHandler
+  // admits. Only the cache-invented heuristic/defaultTTL lifetimes are 200-only.
+  for (const statusCode of [200, 206, 307]) {
+    const info = determineLifetime(statusCode, {}, { immutable: true }, {}, now)
+    t.ok(info && info.lifetime > 0, `immutable grants freshness for ${statusCode}`)
+  }
+  // The cache-invented lifetimes stay 200-only.
   t.equal(
-    determineLifetime(307, {}, { immutable: true }, {}, now),
+    determineLifetime(
+      307,
+      { 'last-modified': new Date(now - 1e6).toUTCString() },
+      {},
+      { heuristic: true },
+      now,
+    ),
     null,
-    'bare-immutable 307 gains no invented freshness',
-  )
-  t.equal(
-    determineLifetime(206, {}, { immutable: true }, {}, now),
-    null,
-    'bare-immutable 206 gains no invented freshness',
-  )
-  const info = determineLifetime(200, {}, { immutable: true }, {}, now)
-  t.ok(
-    info && info.lifetime > 0 && info.explicit === false,
-    'immutable 200 keeps the 1-year default',
+    'heuristic freshness is not extended to 307',
   )
   t.end()
 })

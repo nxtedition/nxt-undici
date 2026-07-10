@@ -1,4 +1,4 @@
-import type { DispatchOptions } from '../lib/index.js'
+import type { DispatchOptions, URLObject } from '../lib/index.js'
 
 const options: DispatchOptions = {
   origin: [
@@ -15,4 +15,11 @@ const readonlyOrigins = [
 ] as const
 const readonlyOptions: DispatchOptions = { origin: readonlyOrigins }
 
-void [options, readonlyOptions]
+const readonlyUrlObject = {
+  protocol: 'http:',
+  hostname: 'readonly.example.test',
+  port: 8080,
+} as const
+const urlObject: URLObject = readonlyUrlObject
+
+void [options, readonlyOptions, urlObject]

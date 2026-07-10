@@ -3,14 +3,14 @@ import type { EventEmitter } from 'node:events'
 import type { Priority } from '@nxtedition/scheduler'
 
 export interface URLObject {
-  origin?: string | null
-  path?: string | null
-  host?: string | null
-  hostname?: string | null
-  port?: string | number | null
-  protocol?: string | null
-  pathname?: string | null
-  search?: string | null
+  readonly origin?: string | null
+  readonly path?: string | null
+  readonly host?: string | null
+  readonly hostname?: string | null
+  readonly port?: string | number | null
+  readonly protocol?: string | null
+  readonly pathname?: string | null
+  readonly search?: string | null
 }
 
 export interface BodyReadable extends Readable {

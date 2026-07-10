@@ -9,6 +9,8 @@
 // - a 304 withdrawing cacheability (no-store/private) must also close the
 //   stored entry's validation-free stale windows (max-stale/SWR), not leave
 //   the old entry reusable until deleteAt.
+// - must-understand overrides its paired no-store fallback on a 304 because
+//   this cache implements 304 revalidation semantics (RFC 9111 §5.2.2.3).
 // - the freshened entry's body must not be aliased between the store's
 //   pending write batch and the chunk delivered to the user handler.
 import { test } from 'tap'
@@ -244,6 +246,41 @@ test('304 withdrawing cacheability (no-store) closes the max-stale window on the
   })
   t.equal(hits, 2, 'entry no longer reusable: origin contacted')
   t.equal(res2.body, 'fresh-uncacheable')
+  t.end()
+})
+
+test('304 must-understand overrides its paired no-store fallback', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    const cacheControl =
+      hits === 1 ? 'max-age=0, must-understand, no-store' : 'max-age=60, must-understand, no-store'
+    if (req.headers['if-none-match']) {
+      res.writeHead(304, { etag: '"v1"', 'cache-control': cacheControl })
+    } else {
+      res.writeHead(200, { etag: '"v1"', 'cache-control': cacheControl })
+    }
+    res.end(hits === 1 ? 'understood-body' : undefined)
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const opts = {
+    origin: origin(server),
+    method: 'GET',
+    path: '/must-understand',
+    headers: {},
+    cache: { store },
+  }
+
+  t.equal((await rawRequest(dispatch, opts)).body, 'understood-body', 'initial 200 is stored')
+  await settle()
+  t.equal((await rawRequest(dispatch, opts)).body, 'understood-body', 'stale entry revalidates')
+  await settle()
+  t.equal((await rawRequest(dispatch, opts)).body, 'understood-body', 'freshened entry is reused')
+  t.equal(hits, 2, 'the third request is a cache hit')
   t.end()
 })
 

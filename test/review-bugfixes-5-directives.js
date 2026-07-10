@@ -203,6 +203,38 @@ test('determineLifetime: malformed max-age no longer falls through to Expires', 
   t.end()
 })
 
+test('must-understand overrides its no-store fallback for an understood status', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 'max-age=60, must-understand, no-store',
+    })
+    res.end('understood-body')
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const opts = {
+    origin: origin(server),
+    method: 'GET',
+    path: '/must-understand',
+    headers: {},
+    cache: { store },
+  }
+
+  const dispatch = makeDispatch()
+  const first = await rawRequest(dispatch, opts)
+  await new Promise((resolve) => setImmediate(resolve))
+  const second = await rawRequest(dispatch, opts)
+
+  t.equal(first.body, 'understood-body')
+  t.equal(second.body, 'understood-body')
+  t.equal(hits, 1, 'paired no-store is ignored and the understood 200 is reused')
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // freshness.js
 // ---------------------------------------------------------------------------

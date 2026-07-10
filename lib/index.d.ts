@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream'
+import type { EventEmitter } from 'node:events'
 import type { Priority } from '@nxtedition/scheduler'
 
 export interface URLObject {
@@ -30,6 +31,7 @@ export type URLLike = string | URL | URLObject
 export type HeaderInput =
   Record<string, string | string[] | null | undefined> | (Buffer | string | (Buffer | string)[])[]
 export type OriginLike = URLLike | readonly URLLike[]
+export type RequestSignal = AbortSignal | EventEmitter
 
 export interface Dispatcher {
   dispatch(opts: object, handler: DispatchHandler): void
@@ -88,7 +90,7 @@ export interface DispatchOptions {
   body?: Readable | Uint8Array | string | BodyFactory | null
   query?: Record<string, unknown> | null
   headers?: HeaderInput | null
-  signal?: AbortSignal | null
+  signal?: RequestSignal | null
   reset?: boolean | null
   blocking?: boolean | null
   timeout?: number | { headers?: number | null; body?: number | null } | null
@@ -147,7 +149,7 @@ export type FollowFn = (location: string, count: number, opts: DispatchOptions) 
 
 export type LookupFn = (
   origin: OriginLike,
-  opts: { signal?: AbortSignal },
+  opts: { signal?: RequestSignal },
   callback: (err: Error | null, address: string | null) => void,
 ) => void | Promise<string>
 

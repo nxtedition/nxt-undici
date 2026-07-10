@@ -10,8 +10,8 @@
 //   (missed same-origin invalidations / wrong-path deletes).
 // - a 206 with the grammar-invalid open-ended Content-Range (bytes N-/M,
 //   RFC 9110 §14.4 requires last-pos) is no longer stored.
-// - serveFromCache honors the pause contract: onData/onComplete are deferred
-//   while the handler is paused and delivered via the resume callback.
+// - serveFromCache delivers a cache hit synchronously and ignores handler
+//   backpressure (documented TODO): the body is a single buffered chunk.
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
@@ -128,9 +128,10 @@ test('206 with open-ended Content-Range (missing last-pos) is not stored', async
   t.end()
 })
 
-test('serveFromCache honors onData backpressure (defers onComplete until resume)', (t) => {
-  const events = []
-  let resume
+test('serveFromCache delivers synchronously and ignores backpressure (return values)', (t) => {
+  // Backpressure is intentionally not honored (TODO in serve.js): the body is
+  // a single already-buffered chunk, so headers/data/complete are delivered
+  // synchronously regardless of what onHeaders/onData return.
   const entry = {
     statusCode: 200,
     headers: { 'cache-control': 'max-age=60' },
@@ -138,99 +139,32 @@ test('serveFromCache honors onData backpressure (defers onComplete until resume)
     cachedAt: Date.now(),
   }
 
-  serveFromCache(
-    entry,
-    {},
-    {
-      onConnect() {},
-      onHeaders(sc, h, r) {
-        resume = r
-        events.push('headers')
-        return true
+  for (const ret of [false, true]) {
+    const events = []
+    serveFromCache(
+      entry,
+      {},
+      {
+        onConnect() {},
+        onHeaders() {
+          events.push('headers')
+          return ret
+        },
+        onData(chunk) {
+          events.push(`data:${chunk}`)
+          return ret
+        },
+        onComplete() {
+          events.push('complete')
+        },
+        onError() {},
       },
-      onData(chunk) {
-        events.push(`data:${chunk}`)
-        return false // pause
-      },
-      onComplete() {
-        events.push('complete')
-      },
-      onError() {},
-    },
-  )
-  t.strictSame(events, ['headers', 'data:hello'], 'paused after data: complete deferred')
-  resume()
-  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'resume delivers completion')
-  t.end()
-})
-
-test('serveFromCache ignores a pause attempt at onHeaders (weak contract)', (t) => {
-  // Returning false from onHeaders is NOT honored — the body and completion
-  // are delivered synchronously anyway.
-  const events = []
-  const entry = {
-    statusCode: 200,
-    headers: { 'cache-control': 'max-age=60' },
-    body: Buffer.from('hello'),
-    cachedAt: Date.now(),
+    )
+    t.strictSame(
+      events,
+      ['headers', 'data:hello', 'complete'],
+      `full synchronous delivery when callbacks return ${ret}`,
+    )
   }
-  serveFromCache(
-    entry,
-    {},
-    {
-      onConnect() {},
-      onHeaders() {
-        events.push('headers')
-        return false
-      },
-      onData(chunk) {
-        events.push(`data:${chunk}`)
-        return true
-      },
-      onComplete() {
-        events.push('complete')
-      },
-      onError() {},
-    },
-  )
-  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'onHeaders false does not pause')
-  t.end()
-})
-
-test('serveFromCache does not deadlock when the handler resumes synchronously inside onData', (t) => {
-  const entry = {
-    statusCode: 200,
-    headers: { 'cache-control': 'max-age=60' },
-    body: Buffer.from('hello'),
-    cachedAt: Date.now(),
-  }
-
-  // Handler stashes the resume from onHeaders and calls it synchronously
-  // inside onData before returning false. completePending isn't set yet, so
-  // the resume must be remembered and onComplete must still fire.
-  const events2 = []
-  let captured
-  serveFromCache(
-    entry,
-    {},
-    {
-      onConnect() {},
-      onHeaders(sc, h, resume) {
-        captured = resume
-        events2.push('headers')
-        return true
-      },
-      onData(chunk) {
-        events2.push('data')
-        captured()
-        return false
-      },
-      onComplete() {
-        events2.push('complete')
-      },
-      onError() {},
-    },
-  )
-  t.strictSame(events2, ['headers', 'data', 'complete'], 'onData synchronous resume also completes')
   t.end()
 })

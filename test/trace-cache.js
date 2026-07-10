@@ -44,6 +44,7 @@ test('trace-cache: miss then hit with one stored doc', async (t) => {
 
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const origin = `http://127.0.0.1:${server.address().port}`
   const dispatcher = makeDispatcher(t)
 
@@ -114,6 +115,7 @@ test('trace-cache: no-store response emits skipped cache-store doc', async (t) =
 
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const origin = `http://127.0.0.1:${server.address().port}`
 
   const { body, statusCode } = await request(origin, {
@@ -162,6 +164,7 @@ test('trace-cache: POST to a cached URL emits cache-invalidate doc', async (t) =
 
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const origin = `http://127.0.0.1:${server.address().port}`
   const dispatcher = makeDispatcher(t)
 
@@ -198,6 +201,7 @@ test('trace-cache: POST to a cached URL emits cache-invalidate doc', async (t) =
 test('trace-cache: only-if-cached 504 is a miss with reason only-if-cached', async (t) => {
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
 
   // No server: only-if-cached forbids going to origin, so the cache answers
   // with a synthetic 504 (RFC 9111 §5.2.1.7) without dispatching.
@@ -272,6 +276,7 @@ test('trace-cache: throwing store.set emits stored false with err tag', async (t
 test('trace-cache: forwarded 1xx emits no cache-store doc', async (t) => {
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
 
   // Raw undici strips interim responses, but composed/mock dispatchers may
   // forward them (same shape the redirect/response-verify guards exercise).
@@ -331,6 +336,7 @@ test('trace-cache: non-cacheable status emits a skipped cache-store doc (reason 
 
   const writer = makeWriter()
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const origin = `http://127.0.0.1:${server.address().port}`
 
   // request() throws on the 500 (response-error interceptor); the cache-store

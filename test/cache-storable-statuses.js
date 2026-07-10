@@ -216,7 +216,9 @@ for (const { status, extra, body } of CASES) {
     const server = await startServer((req, res) => {
       if (req.headers['if-none-match'] === etag) {
         conditional++
-        res.writeHead(304, { etag, 'cache-control': 'no-cache', ...extra })
+        // A bare 304 — no `...extra`, so any Location on the hit below must come
+        // from the CACHED entry (preserved across revalidation), not this response.
+        res.writeHead(304, { etag, 'cache-control': 'no-cache' })
         res.end()
         return
       }

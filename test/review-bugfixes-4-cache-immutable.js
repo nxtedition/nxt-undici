@@ -54,6 +54,7 @@ test('cache: immutable does not override explicit max-age (expires on schedule)'
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,
@@ -85,6 +86,7 @@ test('cache: immutable alone is not cached (immutable is not a freshness source)
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,
@@ -116,6 +118,7 @@ test('cache: explicit s-maxage wins over immutable', async (t) => {
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,

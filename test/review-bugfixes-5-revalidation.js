@@ -132,14 +132,19 @@ test('304 freshening honors the validating response Age header', async (t) => {
   t.end()
 })
 
-test('304 with a non-matching ETag does not freshen the entry or adopt the validator', async (t) => {
+test('304 with a non-matching ETag retries unconditionally instead of serving stale', async (t) => {
   let hits = 0
   const seenINM = []
   const server = await startServer((req, res) => {
     hits++
     seenINM.push(req.headers['if-none-match'] ?? null)
-    res.writeHead(304, { etag: '"v2"', 'cache-control': 'max-age=60' })
-    res.end()
+    if (req.headers['if-none-match']) {
+      res.writeHead(304, { etag: '"v2"', 'cache-control': 'max-age=60' })
+      res.end()
+    } else {
+      res.writeHead(200, { etag: '"v2"', 'cache-control': 'max-age=60' })
+      res.end('fresh-v2-body')
+    }
   })
   t.teardown(() => server.close())
 
@@ -152,14 +157,16 @@ test('304 with a non-matching ETag does not freshen the entry or adopt the valid
   await settle()
 
   const res1 = await rawRequest(dispatch, opts)
-  t.equal(res1.statusCode, 200, 'stored entry served for the validated use')
-  t.equal(res1.body, 'stale-body')
+  t.equal(res1.statusCode, 200)
+  t.equal(res1.body, 'fresh-v2-body', 'unidentified stored bytes were not served')
   t.equal(seenINM[0], '"v1"', 'first conditional used the stored validator')
+  t.equal(seenINM[1], null, 'mismatching 304 was recovered with an unconditional request')
+  t.equal(hits, 2, 'the logical request needed one recovery fetch')
 
   await settle()
   const res2 = await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'entry was NOT freshened: second request revalidates again')
-  t.equal(seenINM[1], '"v1"', 'the mismatching "v2" validator was NOT adopted')
+  t.equal(hits, 2, 'the full recovery response was cached')
+  t.equal(res2.body, 'fresh-v2-body')
   t.end()
 })
 
@@ -169,11 +176,16 @@ test('304 with a duplicated (array) ETag does not evade the identification guard
   const server = await startServer((req, res) => {
     hits++
     seenINM.push(req.headers['if-none-match'] ?? null)
-    // Two ETag field lines (malformed) — undici parses them into an array.
-    res.setHeader('etag', ['"v2"', '"v3"'])
-    res.setHeader('cache-control', 'max-age=60')
-    res.writeHead(304)
-    res.end()
+    if (req.headers['if-none-match']) {
+      // Two ETag field lines (malformed) — undici parses them into an array.
+      res.setHeader('etag', ['"v2"', '"v3"'])
+      res.setHeader('cache-control', 'max-age=60')
+      res.writeHead(304)
+      res.end()
+    } else {
+      res.writeHead(200, { etag: '"v3"', 'cache-control': 'max-age=60' })
+      res.end('fresh-v3-body')
+    }
   })
   t.teardown(() => server.close())
 
@@ -186,12 +198,14 @@ test('304 with a duplicated (array) ETag does not evade the identification guard
   await settle()
 
   const res1 = await rawRequest(dispatch, opts)
-  t.equal(res1.statusCode, 200, 'stored entry served for the validated use')
+  t.equal(res1.statusCode, 200)
+  t.equal(res1.body, 'fresh-v3-body', 'malformed validator did not validate the stored bytes')
 
   await settle()
-  await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'entry was NOT freshened despite the array-shaped mismatching ETag')
-  t.equal(seenINM[1], '"v1"', 'the mismatching validator was NOT adopted')
+  const res2 = await rawRequest(dispatch, opts)
+  t.equal(hits, 2, 'the unconditional recovery response was cached')
+  t.equal(seenINM[1], null, 'the recovery request omitted the cache validator')
+  t.equal(res2.body, 'fresh-v3-body')
   t.end()
 })
 

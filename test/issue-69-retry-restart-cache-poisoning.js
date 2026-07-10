@@ -74,3 +74,57 @@ test('issue #69: unvalidated pos=0 full-200 restart does not poison the cache', 
   t.not(text, 'WORLD', 'attempt 2 body was never cached against attempt 1 headers')
   t.equal(attempts, 3, 'initial + declined resume + a fresh origin fetch (no cache hit)')
 })
+
+test('issue #69: malformed etag cannot validate a restart or poison the cache', async (t) => {
+  t.plan(5)
+
+  let attempts = 0
+  const server = createServer((req, res) => {
+    attempts++
+    if (attempts === 1) {
+      // An unquoted value is not an entity-tag. It must not be retained as a
+      // strong validator or copied into the resume's If-Match request.
+      res.writeHead(200, {
+        'content-length': '5',
+        'cache-control': 'max-age=3600',
+        etag: 'bogus',
+      })
+      res.flushHeaders()
+      setTimeout(() => res.destroy(), 50)
+    } else if (attempts === 2) {
+      t.notOk('if-match' in req.headers, 'malformed etag is not sent as If-Match')
+      // Echoing the same malformed text must not satisfy the splice gate. If
+      // accepted, WORLD would inherit attempt 1's one-hour freshness despite
+      // this response explicitly being no-store.
+      res.writeHead(200, {
+        'content-length': '5',
+        'cache-control': 'no-store',
+        etag: 'bogus',
+      })
+      res.end('WORLD')
+    } else {
+      res.writeHead(200, { 'content-length': '5', 'cache-control': 'max-age=3600' })
+      res.end('hello')
+    }
+  })
+  t.teardown(server.close.bind(server))
+  server.listen(0)
+  await once(server, 'listening')
+
+  const url = `http://0.0.0.0:${server.address().port}`
+  const dispatcher = new undici.Agent()
+  t.teardown(() => dispatcher.close())
+
+  const first = await request(url, { dispatcher, cache: true, retry: () => true })
+  await t.rejects(
+    first.body.text(),
+    /Response retry failed/,
+    'the malformed-etag restart is declined instead of spliced',
+  )
+
+  const second = await request(url, { dispatcher, cache: true, retry: () => true })
+  const text = await second.body.text()
+  t.equal(text, 'hello', 'later request fetches the fresh origin body')
+  t.not(text, 'WORLD', 'the restarted body was not stored with attempt 1 headers')
+  t.equal(attempts, 3, 'initial + declined resume + fresh origin fetch')
+})

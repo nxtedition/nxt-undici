@@ -70,3 +70,52 @@ test('stale-if-error serves the stale entry fast despite the default retry sched
   t.ok(hits <= 3, `origin not hammered (got ${hits} hits)`)
   t.end()
 })
+
+test('stale-if-error preserves an explicit retry opt-out (no forced extra attempt)', async (t) => {
+  let hits = 0
+  const server = createServer((req, res) => {
+    hits++
+    res.writeHead(503, {})
+    res.end('down')
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.teardown(() => server.close())
+  const origin = `http://0.0.0.0:${server.address().port}`
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const now = Date.now()
+  const body = Buffer.from('stale-body')
+  store.set(
+    { origin, method: 'GET', path: '/', headers: {} },
+    {
+      body,
+      start: 0,
+      end: body.length,
+      statusCode: 200,
+      statusMessage: 'OK',
+      headers: { etag: '"v1"', 'cache-control': 'max-age=5, stale-if-error=600' },
+      cacheControlDirectives: { 'max-age': 5, 'stale-if-error': 600 },
+      etag: '"v1"',
+      vary: {},
+      cachedAt: now - 10e3,
+      staleAt: now - 5e3,
+      deleteAt: now + 3600e3,
+    },
+  )
+  await new Promise((r) => setImmediate(r))
+
+  const dispatcher = new Agent()
+  t.teardown(() => dispatcher.close())
+
+  // retry: false is an explicit opt-out — stale-if-error must not force an
+  // extra re-attempt on top of it (Copilot review finding on #64).
+  const res = await request(origin, { cache: { store }, dispatcher, retry: false })
+  const text = await res.body.text()
+
+  t.equal(res.statusCode, 200, 'stale entry still served')
+  t.equal(text, 'stale-body')
+  t.equal(hits, 1, 'exactly one origin attempt — the opt-out is preserved')
+  t.end()
+})

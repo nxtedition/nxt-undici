@@ -335,11 +335,15 @@ test('cache: HEAD response with Content-Range is not cached and emits no error l
 
 // ---------------------------------------------------------------------------
 // Duplicated conditional headers arrive as arrays; the old code called
-// String.prototype.split on them and threw synchronously inside dispatch.
+// String.prototype.split on them and threw synchronously inside dispatch. Per
+// RFC 9110 §5.3 multiple field lines are equivalent to one comma-joined value,
+// so the array is joined before matching (see #68): a matching validator among
+// the lines yields a 304, and a non-matching list falls through to the stored
+// fresh 200 — neither crashes, neither contacts the origin.
 // ---------------------------------------------------------------------------
 
-test('cache: If-None-Match as array does not crash and bypasses to origin', async (t) => {
-  t.plan(3)
+test('cache: If-None-Match as array is treated as one list, does not crash', async (t) => {
+  t.plan(5)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
@@ -360,12 +364,21 @@ test('cache: If-None-Match as array does not crash and bypasses to origin', asyn
   await rawRequest(dispatch, { ...base, headers: {} })
   t.equal(hits, 1)
 
-  const res = await rawRequest(dispatch, {
+  // A matching validator among the array lines yields a 304 from cache.
+  const matched = await rawRequest(dispatch, {
     ...base,
     headers: { 'if-none-match': ['"abc"', '"def"'] },
   })
-  t.equal(res.statusCode, 200, 'array conditional bypasses to origin instead of throwing')
-  t.equal(hits, 2)
+  t.equal(matched.statusCode, 304, 'matching etag among multiple lines returns 304')
+  t.equal(hits, 1, 'matching array validator is served from cache without contacting origin')
+
+  // A non-matching array on a fresh entry falls through to the stored 200.
+  const missed = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'if-none-match': ['"nope"', '"def"'] },
+  })
+  t.equal(missed.statusCode, 200, 'non-matching array serves the fresh stored 200')
+  t.equal(hits, 1, 'non-matching array does not contact the origin')
 })
 
 // ---------------------------------------------------------------------------

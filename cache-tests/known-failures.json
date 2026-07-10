@@ -1,6 +1,8 @@
 {
   "failures": {},
-  "retries": {},
+  "retries": {
+    "304-etag-update-response-ETag": "the origin answers revalidation with a 304 whose ETag does not identify the stored entry; per RFC 9111 the cache must not serve those unvalidated bytes, so RevalidationHandler#retryUnconditional issues one deliberate unconditional refetch — a single intended re-dispatch, not a retry-interceptor bug"
+  },
   "setupFailures": {
     "headers-store-Content-Range": "the test's Content-Range value is not a `bytes …/…` byte-range spec, so parseContentRange rejects it and the 200 is refused storage (skip 'content-range') — it is never cached, so the reuse request misses",
     "headers-store-Set-Cookie": "Set-Cookie responses are never stored (shared-cache decision)",

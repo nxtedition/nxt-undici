@@ -56,7 +56,11 @@ test('response error preserves the terminal body-resume status', async (t) => {
   t.equal(attempts, 2, 'made the initial request and one body-resume attempt')
   t.equal(err.statusCode, 503, 'keeps the status from the terminal resume failure')
   t.equal(err.res.statusCode, 503, 'decorated response metadata uses the terminal status')
-  t.equal(err.res.headers, null, 'does not pair terminal status with earlier response headers')
+  t.same(
+    err.res.headers,
+    { 'x-attempt': 'second' },
+    'pairs the terminal status with the terminal attempt headers',
+  )
   t.equal(err.res.trailers, null, 'does not pair terminal status with earlier response trailers')
   t.match(err.message, /503/, 'keeps the retry layer error describing the failed attempt')
   t.equal(err.cause, firstError, 'keeps the original connection failure as the cause')

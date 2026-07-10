@@ -69,7 +69,6 @@ test('response error preserves inner response metadata as a unit', async (t) => 
     trailers: { 'x-terminal': 'yes' },
   }
   const innerError = Object.assign(new Error('terminal response failed'), {
-    statusCode: 503,
     res: response,
   })
 
@@ -101,6 +100,49 @@ test('response error preserves inner response metadata as a unit', async (t) => 
 
   t.equal(err, innerError, 'forwards the inner error')
   t.equal(err.res, response, 'keeps the inner response metadata object intact')
+  t.equal(err.statusCode, 503, 'backfills the top-level status from inner response metadata')
+  t.same(
+    err.req,
+    {
+      origin: 'http://example.test',
+      path: '/',
+      method: 'GET',
+      headers: {},
+    },
+    'adds request metadata without replacing the inner response',
+  )
   t.same(err.res.headers, { 'x-attempt': 'second' }, 'keeps the terminal response headers')
   t.same(err.res.trailers, { 'x-terminal': 'yes' }, 'keeps the terminal response trailers')
+})
+
+test('response error keeps captured metadata when the inner status matches', async (t) => {
+  const headers = { 'content-type': 'text/plain', 'x-attempt': 'terminal' }
+  const innerError = Object.assign(new Error('response interrupted'), { statusCode: 503 })
+
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(503, headers, () => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err.statusCode, 503, 'keeps the matching terminal status')
+  t.equal(err.res.headers, headers, 'keeps headers captured for that status')
 })

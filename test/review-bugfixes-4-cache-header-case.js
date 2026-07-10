@@ -121,8 +121,9 @@ test('cache: capitalized Cache-Control: no-store prevents storing the response',
 
 // ---------------------------------------------------------------------------
 // A capitalized If-None-Match must be evaluated against the cached etag, same
-// as the lowercase form: matching etag → 304 from cache, non-matching etag →
-// bypass to origin.
+// as the lowercase form: matching etag → 304 from cache, non-matching etag on
+// a fresh entry → serve the stored 200 from cache (RFC 9110 §13.1.2 "proceed
+// as normal"; the entry is fresh, so no origin round-trip is needed — see #68).
 // ---------------------------------------------------------------------------
 
 test('cache: capitalized If-None-Match behaves like lowercase', async (t) => {
@@ -157,10 +158,15 @@ test('cache: capitalized If-None-Match behaves like lowercase', async (t) => {
   t.equal(matched.statusCode, 304, 'matching If-None-Match yields 304')
   t.equal(hits, 1, '304 is served from cache without contacting origin')
 
-  // Non-matching etag → bypass to origin.
+  // Non-matching etag on a fresh entry → serve the stored 200 from cache,
+  // no origin hit (RFC 9110 §13.1.2 "proceed as normal", see #68).
   const missed = await rawRequest(dispatch, { ...base, headers: { 'If-None-Match': '"other"' } })
   t.equal(missed.statusCode, 200, 'non-matching If-None-Match yields the full response')
-  t.equal(hits, 2, 'non-matching If-None-Match bypasses the cache to origin')
+  t.equal(
+    hits,
+    1,
+    'non-matching If-None-Match serves the fresh stored 200 without contacting origin',
+  )
 })
 
 // ---------------------------------------------------------------------------

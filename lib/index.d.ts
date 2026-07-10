@@ -21,6 +21,8 @@ export interface BodyReadable extends Readable {
 }
 
 export type URLLike = string | URL | URLObject
+export type HeaderInput =
+  Record<string, string | string[] | null | undefined> | (Buffer | string | (Buffer | string)[])[]
 
 export interface Dispatcher {
   dispatch(opts: object, handler: DispatchHandler): void
@@ -78,7 +80,7 @@ export interface DispatchOptions {
   method?: string | null
   body?: Readable | Uint8Array | string | BodyFactory | null
   query?: Record<string, unknown> | null
-  headers?: Record<string, string | string[] | null | undefined> | null
+  headers?: HeaderInput | null
   signal?: AbortSignal | null
   reset?: boolean | null
   blocking?: boolean | null
@@ -330,9 +332,7 @@ export function compose(
 ): DispatchFn
 
 export function parseHeaders(
-  headers:
-    | Record<string, string | string[] | null | undefined>
-    | (Buffer | string | (Buffer | string)[])[],
+  headers?: HeaderInput | null,
   obj?: Record<string, string | string[]>,
 ): Record<string, string | string[]>
 

@@ -11,6 +11,9 @@
 //   the old entry reusable until deleteAt.
 // - must-understand overrides its paired no-store fallback on a 304 because
 //   this cache implements 304 revalidation semantics (RFC 9111 §5.2.2.3).
+// - a 304 changing Vary to '*' must likewise retire the selected old row;
+//   merely declining to re-store leaves its old selector reusable via
+//   max-stale.
 // - the freshened entry's body must not be aliased between the store's
 //   pending write batch and the chunk delivered to the user handler.
 import { test } from 'tap'
@@ -312,6 +315,93 @@ test('304 must-understand overrides its paired no-store fallback', async (t) => 
   await settle()
   t.equal((await rawRequest(dispatch, opts)).body, 'understood-body', 'freshened entry is reused')
   t.equal(hits, 2, 'the third request is a cache hit')
+  t.end()
+})
+
+test('304 changing Vary expires the selected row under its old selector', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    if (req.headers['if-none-match']) {
+      res.writeHead(304, {
+        etag: '"v1"',
+        'cache-control': 'max-age=60',
+        vary: 'accept-language',
+      })
+      res.end()
+    } else {
+      res.writeHead(200, { 'cache-control': 'no-store' })
+      res.end('french-body')
+    }
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), method: 'GET', path: '/x', cache: { store } }
+
+  // This selected row predates Vary, so it currently matches every language.
+  seedStale(store, origin(server), { etag: '"v1"', body: 'english-body' })
+  await settle()
+
+  const english = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'accept-language': 'en' },
+  })
+  t.equal(english.body, 'english-body', 'the matching 304 validates this use')
+  t.equal(hits, 1)
+  await settle()
+
+  // The freshened en row no longer matches. The pre-304 no-Vary row must not
+  // remain as a stale fallback, or max-stale leaks the en representation to fr.
+  const french = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'accept-language': 'fr', 'cache-control': 'max-stale=600' },
+  })
+  t.equal(hits, 2, 'the obsolete no-Vary row was not reused')
+  t.equal(french.body, 'french-body', 'the other variant came from the origin')
+  t.end()
+})
+
+test('304 changing Vary to * retires the selected row from max-stale reuse', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    if (req.headers['if-none-match']) {
+      res.writeHead(304, {
+        etag: '"v1"',
+        'cache-control': 'max-age=60',
+        vary: '*',
+      })
+      res.end()
+    } else {
+      res.writeHead(200, { 'cache-control': 'no-store' })
+      res.end('fresh-uncacheable')
+    }
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const base = { origin: origin(server), method: 'GET', path: '/x', cache: { store } }
+
+  seedStale(store, origin(server), { etag: '"v1"' })
+  await settle()
+
+  const validated = await rawRequest(dispatch, { ...base, headers: {} })
+  t.equal(validated.body, 'stale-body', 'the matching 304 validates this use')
+  t.equal(validated.headers.vary, '*', 'served metadata includes the updated Vary')
+  t.equal(hits, 1)
+  await settle()
+
+  const next = await rawRequest(dispatch, {
+    ...base,
+    headers: { 'cache-control': 'max-stale=600' },
+  })
+  t.equal(hits, 2, 'the obsolete pre-Vary row was not reused')
+  t.equal(next.body, 'fresh-uncacheable', 'the next request reached the origin')
   t.end()
 })
 

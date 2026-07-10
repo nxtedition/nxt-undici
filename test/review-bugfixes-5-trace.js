@@ -199,6 +199,54 @@ test('trace: revalidation failure with no stale window emits miss/revalidate-err
   t.end()
 })
 
+test('trace: a user-aborted revalidation emits reason aborted, not revalidate-error', async (t) => {
+  let release
+  const held = []
+  const server = await startServer((req, res) => {
+    held.push(res) // hold the conditional request in-flight, never answer
+    release?.()
+  })
+  t.teardown(() => {
+    for (const res of held) res.destroy()
+    server.closeAllConnections?.()
+    server.close()
+  })
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  // stale-if-error window open: the abort must NOT be converted into a stale
+  // serve, and the trace reason must be 'aborted', not 'revalidate-error'.
+  seedStale(store, origin, { directives: { 'max-age': 5, 'stale-if-error': 600 } })
+  await settle()
+
+  const writer = makeWriter()
+  const ac = new AbortController()
+  const arrived = new Promise((r) => {
+    release = r
+  })
+  const reqP = request(origin, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+    signal: ac.signal,
+    retry: false,
+  })
+  await arrived
+  ac.abort(new Error('user-abort'))
+  await t.rejects(reqP, 'aborted revalidation rejects rather than serving stale')
+
+  const docs = lookups(writer)
+  t.equal(docs.length, 1, 'one lookup doc for the aborted dispatch')
+  t.equal(docs[0].result, 'miss')
+  t.equal(
+    docs[0].reason,
+    'aborted',
+    "aborted revalidation is not misclassified as 'revalidate-error'",
+  )
+  t.end()
+})
+
 test('trace: max-stale and stale-while-revalidate serves carry their reasons', async (t) => {
   let hits = 0
   const server = await startServer((req, res) => {

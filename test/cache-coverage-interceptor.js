@@ -442,6 +442,23 @@ test('cache: Vary array containing "*" is not cached', async (t) => {
   t.equal(store.sets.length, 0, 'wildcard member inside array Vary declines storage')
 })
 
+test('cache: Vary array with a non-string member is not cached', async (t) => {
+  const store = makeRecordingStore()
+  const inner = makeInnerHandler()
+  const handler = new CacheHandler(
+    { origin: 'http://example.local', path: '/', method: 'GET', headers: {} },
+    { store, handler: inner },
+  )
+
+  handler.onConnect(() => {})
+  // A non-string entry is a genuinely invalid shape — parseVary returns null.
+  handler.onHeaders(200, { 'cache-control': 'max-age=60', vary: ['x-a', 42] }, () => {})
+  handler.onData(Buffer.from('body'))
+  handler.onComplete(null)
+
+  t.equal(store.sets.length, 0, 'non-string member inside array Vary declines storage')
+})
+
 // ---------------------------------------------------------------------------
 // CacheHandler store-time header stripping
 // ---------------------------------------------------------------------------

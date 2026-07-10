@@ -2151,6 +2151,43 @@ test('cache: If-None-Match with wildcard * returns 304', async (t) => {
   t.equal(result.statusCode, 304, 'wildcard If-None-Match returns 304')
 })
 
+test('cache: multi-line If-None-Match with a matching etag returns 304', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"abc123"',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // Duplicated If-None-Match lines arrive as an array. RFC 9110 §5.3: they are
+  // equivalent to one comma-joined list, so a matching validator among them
+  // still yields a 304 rather than serving the full 200.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': ['"other"', '"abc123"'] },
+  })
+  t.equal(result.statusCode, 304, 'matching etag among multiple lines returns 304')
+  t.equal(hits, 1, 'origin not contacted')
+})
+
 test('cache: If-Modified-Since returns 304 when resource not modified', async (t) => {
   t.plan(2)
   let hits = 0

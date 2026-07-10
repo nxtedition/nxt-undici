@@ -510,3 +510,23 @@ test('parseHttpDate: case variants and mismatched weekday are accepted; real gar
   t.equal(parseHttpDate('2026-07-04T00:00:00Z'), undefined, 'ISO 8601 still rejected')
   t.end()
 })
+
+test('parseHttpDate: RFC 850 two-digit years use the moving 50-year window', (t) => {
+  const referenceTime = Date.UTC(2026, 10, 6, 8, 49, 37)
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-76 08:49:37 GMT', referenceTime)?.getUTCFullYear(),
+    2076,
+    'exactly 50 years in the future stays in the current century',
+  )
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-76 08:49:38 GMT', referenceTime)?.getUTCFullYear(),
+    1976,
+    'the cutoff compares the complete timestamp, not only the year',
+  )
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-77 08:49:37 GMT', referenceTime)?.getUTCFullYear(),
+    1977,
+    'more than 50 years in the future maps to the most recent past year',
+  )
+  t.end()
+})

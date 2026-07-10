@@ -86,14 +86,28 @@ test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-nega
   t.end()
 })
 
-test('parseCacheControl - valueless directive with explicit = is an invalid qualified form', (t) => {
+test('parseCacheControl - malformed arguments follow directive-specific safe behavior', (t) => {
   t.strictSame(parseCacheControl('public='), {}, 'public= is not treated as public')
   // no-store is safety-critical: a malformed valued form fails RESTRICTIVE
   // (treated as bare no-store) — dropping it would fail open and store a
   // response the origin forbade. See review-bugfixes-5-directives.js.
   t.strictSame(parseCacheControl('no-store='), { 'no-store': true }, 'no-store= fails restrictive')
   t.strictSame(parseCacheControl('public'), { public: true }, 'bare public still works')
-  t.strictSame(parseCacheControl('immutable=x'), {}, 'qualified immutable ignored')
+  t.strictSame(
+    parseCacheControl('immutable=x'),
+    { immutable: true },
+    'RFC 8246 ignores token arguments without dropping immutable',
+  )
+  t.strictSame(
+    parseCacheControl('immutable="ignored"'),
+    { immutable: true },
+    'RFC 8246 ignores quoted arguments without dropping immutable',
+  )
+  t.strictSame(
+    parseCacheControl('immutable='),
+    { immutable: true },
+    'an empty argument is ignored without dropping immutable',
+  )
   t.end()
 })
 

@@ -1,10 +1,11 @@
 // Issue #67: extend storability beyond 200/206/307. A shared cache should
 // store permanent redirects (301/308) and negative responses (404/410) when
-// the origin sends EXPLICIT freshness (max-age/s-maxage/Expires or immutable),
-// so a media backend stops refetching them on every request. The cache-
-// INVENTED lifetimes (heuristic from Last-Modified, configured defaultTTL)
-// stay 200-only, so these statuses are never cached on the cache's own
-// initiative.
+// the origin sends EXPLICIT freshness (max-age/s-maxage/Expires), so a media
+// backend stops refetching them on every request. The cache-INVENTED lifetimes
+// (heuristic from Last-Modified, configured defaultTTL) stay 200-only, so these
+// statuses are never cached on the cache's own initiative. (Restricting the
+// heuristic to 200 is a conservative policy — RFC 9110 §15.1 also lists
+// 301/308/404/410 as heuristically cacheable — not a protocol requirement.)
 //
 // Uses the standalone interceptors.cache() composition (no redirect / no
 // response-error interceptor) so a cached 301/308 is returned verbatim rather
@@ -198,5 +199,88 @@ test('storability: 404 with Expires is cached; 404 without any freshness is not'
   await flush()
   await rawRequest(dispatch, mk('/bare'))
   t.equal(hits, 3, '404 without freshness refetched (2 more hits)')
+  t.end()
+})
+
+// The other origin-driven storability signal (besides explicit freshness):
+// unqualified `Cache-Control: no-cache` + a validator. determineLifetime
+// returns null for it, but CacheHandler's store-and-revalidate path (undici PR
+// #5515) then stores it with lifetime 0 / explicit — for EVERY admitted status,
+// not just 200. Each reuse must revalidate with a conditional request and, on a
+// 304, serve the cached status/body instead of a full refetch.
+for (const { status, extra, body } of CASES) {
+  test(`storability: ${status} with no-cache + a validator stores and revalidates (304)`, async (t) => {
+    const etag = '"v1"'
+    let conditional = 0
+    const server = await startServer((req, res) => {
+      if (req.headers['if-none-match'] === etag) {
+        conditional++
+        res.writeHead(304, { etag, 'cache-control': 'no-cache', ...extra })
+        res.end()
+        return
+      }
+      res.writeHead(status, { etag, 'cache-control': 'no-cache', ...extra })
+      res.end(body)
+    })
+    t.teardown(server.close.bind(server))
+
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    t.teardown(() => store.close())
+    const dispatch = makeDispatch()
+    const opts = {
+      origin: origin(server),
+      method: 'GET',
+      path: '/nc',
+      headers: {},
+      cache: { store },
+    }
+
+    const miss = await rawRequest(dispatch, opts)
+    t.equal(miss.statusCode, status, 'miss: origin status')
+    t.equal(miss.body, body)
+    await flush()
+
+    const hit = await rawRequest(dispatch, opts)
+    t.equal(conditional, 1, `${status} revalidated with a conditional request (If-None-Match)`)
+    t.equal(hit.statusCode, status, 'hit: cached status served after 304')
+    t.equal(hit.body, body, 'hit: cached body served after 304')
+    if (extra.location) {
+      t.equal(
+        hit.headers.location,
+        extra.location,
+        'redirect Location preserved through revalidation',
+      )
+    }
+    t.end()
+  })
+}
+
+test('storability: no-cache WITHOUT a validator is not stored (nothing to revalidate)', async (t) => {
+  // no-cache stores with lifetime 0, so it is stale on arrival: without a
+  // validator there is no cheap revalidation and computeEntryTimes declines it.
+  for (const { status, extra, body } of CASES) {
+    let hits = 0
+    const server = await startServer((req, res) => {
+      hits++
+      res.writeHead(status, { 'cache-control': 'no-cache', ...extra })
+      res.end(body)
+    })
+    t.teardown(server.close.bind(server))
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    t.teardown(() => store.close())
+    const dispatch = makeDispatch()
+    const opts = {
+      origin: origin(server),
+      method: 'GET',
+      path: '/nv',
+      headers: {},
+      cache: { store },
+    }
+
+    await rawRequest(dispatch, opts)
+    await flush()
+    await rawRequest(dispatch, opts)
+    t.equal(hits, 2, `${status} with bare no-cache and no validator is refetched, not stored`)
+  }
   t.end()
 })

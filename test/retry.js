@@ -49,7 +49,7 @@ test('retry destroy post response', (t) => {
   const server = createServer((req, res) => {
     if (x === 0) {
       t.pass()
-      res.setHeader('etag', 'asd')
+      res.setHeader('etag', '"asd"')
       res.write('asd')
       setTimeout(() => {
         res.destroy()
@@ -57,7 +57,7 @@ test('retry destroy post response', (t) => {
     } else if (x === 1) {
       t.same(req.headers.range, 'bytes=3-')
       res.setHeader('content-range', 'bytes 3-6/6')
-      res.setHeader('etag', 'asd')
+      res.setHeader('etag', '"asd"')
       res.statusCode = 206
       res.end('end')
     }
@@ -80,7 +80,7 @@ test('retry rejects forged 206 with excess body bytes', (t) => {
   const server = createServer((req, res) => {
     if (x === 0) {
       t.pass()
-      res.setHeader('etag', '123')
+      res.setHeader('etag', '"123"')
       res.setHeader('content-length', '5')
       res.write('use')
       setTimeout(() => {
@@ -89,7 +89,7 @@ test('retry rejects forged 206 with excess body bytes', (t) => {
     } else if (x === 1) {
       t.same(req.headers.range, 'bytes=3-4')
       res.setHeader('content-range', 'bytes 3-4/5')
-      res.setHeader('etag', '123')
+      res.setHeader('etag', '"123"')
       res.statusCode = 206
       // Send more bytes than the claimed range
       res.end('r1INJECTED_EXTRA_BYTES')

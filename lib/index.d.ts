@@ -1,15 +1,16 @@
 import type { Readable } from 'node:stream'
+import type { EventEmitter } from 'node:events'
 import type { Priority } from '@nxtedition/scheduler'
 
 export interface URLObject {
-  origin?: string | null
-  path?: string | null
-  host?: string | null
-  hostname?: string | null
-  port?: string | number | null
-  protocol?: string | null
-  pathname?: string | null
-  search?: string | null
+  readonly origin?: string | null
+  readonly path?: string | null
+  readonly host?: string | null
+  readonly hostname?: string | null
+  readonly port?: string | number | null
+  readonly protocol?: string | null
+  readonly pathname?: string | null
+  readonly search?: string | null
 }
 
 export interface BodyReadable extends Readable {
@@ -17,13 +18,23 @@ export interface BodyReadable extends Readable {
   json(): Promise<unknown>
   arrayBuffer(): Promise<ArrayBuffer>
   blob(): Promise<Blob>
+  bytes(): Promise<Uint8Array>
+  /** Not implemented by @nxtedition/undici's BodyReadable; always rejects. */
+  formData(): Promise<never>
   dump(): Promise<void>
+  readonly bodyUsed: boolean
+  /** The Node.js BodyReadable does not expose a Fetch ReadableStream body. */
+  readonly body?: never
 }
 
 export type URLLike = string | URL | URLObject
+export type HeaderInput =
+  Record<string, string | string[] | null | undefined> | (Buffer | string | (Buffer | string)[])[]
+export type OriginLike = URLLike | readonly URLLike[]
+export type RequestSignal = AbortSignal | EventEmitter
 
 export interface Dispatcher {
-  dispatch(opts: object, handler: DispatchHandler): void
+  dispatch(opts: DispatchOptions, handler: DispatchHandler): void
 }
 
 export interface DispatchHandler {
@@ -63,7 +74,7 @@ export type { TraceWriter } from '@nxtedition/trace'
 import type { TraceWriter } from '@nxtedition/trace'
 
 export type BodyFactoryResult =
-  Readable | Uint8Array | string | Iterable<unknown> | AsyncIterable<unknown>
+  Readable | ArrayBuffer | ArrayBufferView | string | Iterable<unknown> | AsyncIterable<unknown>
 
 /** Called with an options object (not a bare signal); the signal aborts when the
  *  request is destroyed before the factory resolves. May be async. */
@@ -73,16 +84,18 @@ export type BodyFactory = (opts: {
 
 export interface DispatchOptions {
   id?: string | null
-  origin?: string | null
+  origin?: OriginLike | null
   path?: string | null
   method?: string | null
   body?: Readable | Uint8Array | string | BodyFactory | null
   query?: Record<string, unknown> | null
-  headers?: Record<string, string | string[] | null | undefined> | null
-  signal?: AbortSignal | null
+  headers?: HeaderInput | null
+  signal?: RequestSignal | null
   reset?: boolean | null
   blocking?: boolean | null
   timeout?: number | { headers?: number | null; body?: number | null } | null
+  /** Alias for `headersTimeout`. */
+  headerTimeout?: number | null
   headersTimeout?: number | null
   bodyTimeout?: number | null
   idempotent?: boolean | null
@@ -99,8 +112,11 @@ export interface DispatchOptions {
   /** Alias for `follow`; ignored when `follow` is also set. */
   redirect?: number | FollowFn | boolean | null
   error?: boolean | null
+  /** Alias for `error`; ignored when `error` is also set. */
+  throwOnError?: boolean | null
   verify?: VerifyOptions | boolean | null
   logger?: LoggerLike | null
+  userAgent?: string | null
   /** Per-request trace writer: undefined falls back to the per-thread writer
    *  installed via @nxtedition/trace's installTrace(), null disables tracing
    *  for this request. */
@@ -132,8 +148,8 @@ export type RetryFn = (
 export type FollowFn = (location: string, count: number, opts: DispatchOptions) => boolean
 
 export type LookupFn = (
-  origin: string | URLLike | Array<string | URLLike>,
-  opts: { signal?: AbortSignal },
+  origin: OriginLike,
+  opts: { signal?: RequestSignal },
   callback: (err: Error | null, address: string | null) => void,
 ) => void | Promise<string>
 
@@ -182,6 +198,8 @@ export interface LogInterceptorOptions {
 }
 
 export interface PressureInterceptorOptions {
+  /** Trace writer for pressure episode documents; null disables tracing. */
+  trace?: TraceWriter | null
   /** Sampling interval for the internal EWMA loop, in ms (default 200).
    *  Set to 0 to disable the internal timer and drive sampling yourself via
    *  `sample()` from a loop you already run. */
@@ -301,7 +319,7 @@ export interface CacheStore {
  *  upgrade attempt rejects with InvalidArgumentError — use dispatch() instead. */
 export interface RequestOptions extends Omit<DispatchOptions, 'upgrade'> {
   url?: URLLike | null
-  dispatch?: DispatchFn | null
+  dispatch?: DispatchFn | Dispatcher | null
   dispatcher?: Dispatcher | null
   /** highWaterMark for the response body readable (non-negative integer). */
   highWaterMark?: number | null
@@ -330,9 +348,7 @@ export function compose(
 ): DispatchFn
 
 export function parseHeaders(
-  headers:
-    | Record<string, string | string[] | null | undefined>
-    | (Buffer | string | (Buffer | string)[])[],
+  headers?: HeaderInput | null,
   obj?: Record<string, string | string[]>,
 ): Record<string, string | string[]>
 

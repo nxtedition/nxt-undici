@@ -85,3 +85,24 @@ test('priority: an immediately acquired dispatch preserves its Promise result', 
   t.equal(dispatch(opts, handler()), result)
   await result
 })
+
+test('priority: a queued dispatch keeps the permitted void return contract', (t) => {
+  let calls = 0
+  let releaseFirst
+  const dispatch = interceptors.priority()((_request, wrapped) => {
+    calls++
+    if (calls === 1) {
+      releaseFirst = () => wrapped.onConnect(() => {})
+    } else {
+      wrapped.onConnect(() => {})
+    }
+  })
+
+  dispatch(opts, handler())
+  t.equal(dispatch(opts, handler()), undefined)
+  t.equal(calls, 1, 'the second dispatch is queued')
+
+  releaseFirst()
+  t.equal(calls, 2, 'the queued dispatch runs after the slot is released')
+  t.end()
+})

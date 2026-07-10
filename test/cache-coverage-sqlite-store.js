@@ -1,7 +1,6 @@
-/* eslint-disable */
 // Coverage tests for lib/sqlite-cache-store.js — targets the paths the
 // existing suites leave uncovered: broadcast registry pruning of dead
-// WeakRefs, stale-table drop failure handling, gc()/clear() error paths,
+// WeakRefs, schema compatibility failures, gc()/clear() error paths,
 // delete() (batch + DB invalidation), within-batch coalescing, flush
 // supersede semantics, flush time-budget slicing, SQLITE_FULL / non-FULL
 // flush errors, findValue full-scan + sort comparator arms, matchesValue
@@ -115,11 +114,11 @@ test('constructor honors opts.db.timeout and maxSize with a file-backed db', asy
 })
 
 // ---------------------------------------------------------------------------
-// Stale-table dropping at construction
+// Schema compatibility preflight
 // ---------------------------------------------------------------------------
 
-test('old-version tables are dropped, prefix-sharing user tables kept', async (t) => {
-  const dbPath = tmpDb(t, 'stale-drop-ok')
+test('old-version tables fail hard, prefix-sharing user tables are kept', (t) => {
+  const dbPath = tmpDb(t, 'schema-mismatch')
 
   const seed = new DatabaseSync(dbPath)
   seed.exec(`
@@ -129,9 +128,14 @@ test('old-version tables are dropped, prefix-sharing user tables kept', async (t
   `)
   seed.close()
 
-  const store = new SqliteCacheStore({ location: dbPath })
-  store.set(makeKey({ path: '/after-drop' }), makeValue())
-  store.close()
+  let error
+  try {
+    new SqliteCacheStore({ location: dbPath })
+    t.fail('construction should reject an incompatible cache schema')
+  } catch (err) {
+    error = err
+  }
+  t.equal(error?.code, 'ERR_SQLITE_CACHE_SCHEMA_MISMATCH')
 
   const check = new DatabaseSync(dbPath, { readOnly: true })
   t.teardown(() => check.close())
@@ -139,113 +143,47 @@ test('old-version tables are dropped, prefix-sharing user tables kept', async (t
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
     .all()
     .map((r) => r.name)
-  t.notOk(tables.includes('cacheInterceptorV1'), 'stale digit-version table dropped')
+  t.ok(tables.includes('cacheInterceptorV1'), 'incompatible cache table preserved')
   t.ok(tables.includes('cacheInterceptorVKeep'), 'non-digit-suffix table preserved')
+  t.strictSame(
+    tables.filter((name) => /^cacheInterceptorV\d+$/.test(name)),
+    ['cacheInterceptorV1'],
+    'constructor did not create the current table',
+  )
   t.end()
 })
 
-test('failed stale-table drop rolls back, warns, and does not brick construction', async (t) => {
-  const dbPath = tmpDb(t, 'stale-drop-fail')
-
-  const seed = new DatabaseSync(dbPath)
-  seed.exec(`CREATE TABLE cacheInterceptorV1 (id INTEGER PRIMARY KEY, url TEXT);`)
-  seed.close()
-
+test('schema inspection errors propagate without warning-and-continue', async (t) => {
+  const dbPath = tmpDb(t, 'schema-read-fail')
   const warnings = collectWarnings(t)
-
   const AnyDB = /** @type {any} */ (DatabaseSync)
-  const origExec = AnyDB.prototype.exec
-  AnyDB.prototype.exec = function (sql) {
-    if (/^DROP TABLE/.test(sql)) {
-      throw new Error('synthetic drop failure')
+  const origPrepare = AnyDB.prototype.prepare
+  const synthetic = Object.assign(new Error('synthetic schema read failure'), { errcode: 11 })
+  AnyDB.prototype.prepare = function (sql) {
+    if (/FROM sqlite_master/.test(sql)) {
+      throw synthetic
     }
-    return origExec.call(this, sql)
+    return origPrepare.call(this, sql)
   }
 
-  let store
+  let error
   try {
-    store = new SqliteCacheStore({ location: dbPath })
+    new SqliteCacheStore({ location: dbPath })
+    t.fail('construction should propagate schema inspection errors')
+  } catch (err) {
+    error = err
   } finally {
-    AnyDB.prototype.exec = origExec
+    AnyDB.prototype.prepare = origPrepare
   }
-  // Guarded: the test closes the store itself before inspecting the file.
-  t.teardown(() => {
-    try {
-      store.close()
-    } catch (err) {
-      if (err?.code !== 'ERR_INVALID_STATE') throw err
-    }
-  })
-
   await flush()
-  t.ok(
-    warnings.some((w) => /synthetic drop failure/.test(w.message)),
-    'cleanup failure surfaced as a process warning',
-  )
-
-  // The store is fully functional despite the failed cleanup.
-  store.set(makeKey({ path: '/survives' }), makeValue())
-  await flush()
-  t.ok(store.get(makeKey({ path: '/survives' })), 'store works after failed cleanup')
-
-  // The stale table is still there (transaction rolled back).
-  store.close()
-  const check = new DatabaseSync(dbPath, { readOnly: true })
-  t.teardown(() => check.close())
-  const tables = check
-    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
-    .all()
-    .map((r) => r.name)
-  t.ok(tables.includes('cacheInterceptorV1'), 'stale table kept after rollback')
+  t.equal(error, synthetic, 'the original corruption-style error is rethrown')
+  t.equal(warnings.length, 0, 'constructor does not downgrade the failure to a warning')
   t.end()
 })
 
 // ---------------------------------------------------------------------------
 // gc() / clear() error paths
 // ---------------------------------------------------------------------------
-
-test('stale-table drop failure where ROLLBACK also fails still only warns', async (t) => {
-  const dbPath = tmpDb(t, 'stale-drop-rollback-fail')
-
-  const seed = new DatabaseSync(dbPath)
-  seed.exec(`CREATE TABLE cacheInterceptorV2 (id INTEGER PRIMARY KEY);`)
-  seed.close()
-
-  const warnings = collectWarnings(t)
-
-  const AnyDB = /** @type {any} */ (DatabaseSync)
-  const origExec = AnyDB.prototype.exec
-  AnyDB.prototype.exec = function (sql) {
-    if (/^DROP TABLE/.test(sql)) {
-      throw new Error('synthetic drop failure')
-    }
-    if (sql === 'ROLLBACK') {
-      // Roll back for real (so the connection stays usable), then report
-      // failure — mimics "no transaction is active" after an auto-rollback.
-      origExec.call(this, sql)
-      throw new Error('synthetic rollback failure')
-    }
-    return origExec.call(this, sql)
-  }
-
-  let store
-  try {
-    store = new SqliteCacheStore({ location: dbPath })
-  } finally {
-    AnyDB.prototype.exec = origExec
-  }
-  t.teardown(() => store.close())
-
-  await flush()
-  t.ok(
-    warnings.some((w) => /synthetic drop failure/.test(w.message)),
-    'original drop error (not the rollback error) is the warning',
-  )
-  store.set(makeKey({ path: '/still-works' }), makeValue())
-  await flush()
-  t.ok(store.get(makeKey({ path: '/still-works' })), 'store functional despite double failure')
-  t.end()
-})
 
 test('gc() SQL failure emits warnings from both catch and finally-catch', async (t) => {
   const store = new SqliteCacheStore()

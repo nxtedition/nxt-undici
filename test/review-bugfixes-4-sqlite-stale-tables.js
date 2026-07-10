@@ -127,3 +127,33 @@ test('corrupt database fails hard and is not replaced', (t) => {
   t.strictSame(fs.readFileSync(dbPath), original, 'corrupt file is preserved byte-for-byte')
   t.end()
 })
+
+test('a close() failure during schema-error cleanup does not mask the original error', (t) => {
+  const dbPath = tmpDb(t, 'schema-close-fail')
+  const seed = new DatabaseSync(dbPath)
+  seed.exec('CREATE TABLE cacheInterceptorV99999 (id INTEGER PRIMARY KEY);')
+  seed.close()
+
+  // Force close() to throw only while the constructor is cleaning up after the
+  // schema check fails, so both errors race to propagate out of the catch.
+  const realClose = DatabaseSync.prototype.close
+  const closeErr = new Error('close boom')
+  DatabaseSync.prototype.close = function () {
+    throw closeErr
+  }
+
+  let error
+  try {
+    new SqliteCacheStore({ location: dbPath })
+    t.fail('construction should reject an incompatible cache schema')
+  } catch (err) {
+    error = err
+  } finally {
+    DatabaseSync.prototype.close = realClose
+  }
+
+  t.equal(error?.name, 'SuppressedError', 'both failures are retained in a SuppressedError')
+  t.equal(error?.error?.name, 'SqliteCacheSchemaError', 'the schema error stays the primary .error')
+  t.equal(error?.suppressed, closeErr, 'the close() failure is retained as .suppressed')
+  t.end()
+})

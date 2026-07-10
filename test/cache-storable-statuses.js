@@ -116,7 +116,11 @@ test('storability: non-200 statuses are NOT heuristically cached (200 is)', asyn
       res.writeHead(status, { 'last-modified': lastModified, ...extra })
       res.end('x')
     })
+    // Register teardowns immediately so a throwing assertion below can't leak
+    // the server/store into later iterations or tests.
+    t.teardown(server.close.bind(server))
     const store = new SqliteCacheStore({ location: ':memory:' })
+    t.teardown(() => store.close())
     const dispatch = makeDispatch()
     const opts = {
       origin: origin(server),
@@ -135,8 +139,6 @@ test('storability: non-200 statuses are NOT heuristically cached (200 is)', asyn
     } else {
       t.equal(hits, 2, `${status} is not heuristically cached (no explicit freshness)`)
     }
-    store.close()
-    server.close()
   }
   t.end()
 })

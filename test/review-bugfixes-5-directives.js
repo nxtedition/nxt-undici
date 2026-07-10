@@ -209,6 +209,9 @@ test('determineLifetime: immutable applies to every admitted status (like a larg
   for (const statusCode of [200, 206, 307]) {
     const info = determineLifetime(statusCode, {}, { immutable: true }, {}, now)
     t.ok(info && info.lifetime > 0, `immutable grants freshness for ${statusCode}`)
+    // immutable is origin-provided, so it is explicit (like max-age), not a
+    // cache-invented lifetime — matters for store-and-revalidate gating.
+    t.equal(info.explicit, true, `immutable is explicit freshness for ${statusCode}`)
   }
   // The cache-invented lifetimes stay 200-only.
   t.equal(

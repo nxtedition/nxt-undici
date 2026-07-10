@@ -772,6 +772,78 @@ test('cache: opts.query with an empty path folds onto "/"', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
+// makeKey: origin normalization (RFC 9110 §4.2.3)
+// ---------------------------------------------------------------------------
+
+// Fake dispatch that always "misses" through to a recording store, so the
+// stored key.origin exposes exactly what makeKey canonicalized on both the get
+// (store.get) and set (store.set) paths — they share one makeKey, so equal set
+// keys imply equal get keys.
+function driveOrigin(origin, store) {
+  const wrapped = interceptors.cache()((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, { 'cache-control': 'max-age=60' }, () => {})
+    handler.onData(Buffer.from('x'))
+    handler.onComplete(null)
+    return true
+  })
+  wrapped({ origin, path: '/', method: 'GET', headers: {}, cache: { store } }, makeInnerHandler())
+}
+
+test('cache: makeKey canonicalizes equivalent origins onto one key', async (t) => {
+  // Every spelling of the same target URI must key identically: default port
+  // spelled out, scheme/host case, and a URL object (toString appends "/").
+  const equivalents = [
+    'https://example.com',
+    'https://example.com:443',
+    'HTTPS://EXAMPLE.COM',
+    'https://Example.Com:443',
+    new URL('https://example.com'),
+  ]
+  // One shared store for every variant: fragmentation is a property of the
+  // WHOLE key (origin + method + path + headers), not just the origin, so
+  // strictSame every produced key against the first — a mismatch in any field
+  // is what splits equivalent URIs into separate entries.
+  const store = makeRecordingStore()
+  for (const origin of equivalents) {
+    driveOrigin(origin, store)
+  }
+  t.equal(store.sets.length, equivalents.length, 'every variant produced a store set')
+  const first = store.sets[0].key
+  t.equal(first.origin, 'https://example.com', 'origin normalized to https://example.com')
+  for (let i = 1; i < store.sets.length; i++) {
+    t.strictSame(
+      store.sets[i].key,
+      first,
+      `key for ${equivalents[i]} is identical to ${equivalents[0]}`,
+    )
+  }
+})
+
+test('cache: makeKey preserves non-default ports and distinct hosts', async (t) => {
+  const cases = [
+    ['https://example.com:8443', 'https://example.com:8443'],
+    ['http://example.com:8080', 'http://example.com:8080'],
+    // http default port elided, but https on the same host stays distinct.
+    ['http://example.com:80', 'http://example.com'],
+    // Distinct hosts must not collapse onto one key.
+    ['https://other.example.com', 'https://other.example.com'],
+  ]
+  for (const [origin, expected] of cases) {
+    const store = makeRecordingStore()
+    driveOrigin(origin, store)
+    t.equal(store.sets[0].key.origin, expected, `${origin} -> ${expected}`)
+  }
+
+  // Two different hosts produce two different keys (no fragmentation is fine;
+  // COLLISION would be a poisoning bug).
+  const store = makeRecordingStore()
+  driveOrigin('https://a.example.com', store)
+  driveOrigin('https://b.example.com', store)
+  t.not(store.sets[0].key.origin, store.sets[1].key.origin, 'distinct hosts key distinctly')
+})
+
+// ---------------------------------------------------------------------------
 // Trace-gated read-path branches
 // ---------------------------------------------------------------------------
 

@@ -74,3 +74,14 @@ test('priority: a throwing onError does not create an unhandled rejection', asyn
   await new Promise((resolve) => setImmediate(resolve))
   t.equal(unhandled, undefined)
 })
+
+test('priority: an immediately acquired dispatch preserves its Promise result', async (t) => {
+  const result = Promise.resolve()
+  const dispatch = interceptors.priority()((_request, wrapped) => {
+    wrapped.onConnect(() => {})
+    return result
+  })
+
+  t.equal(dispatch(opts, handler()), result)
+  await result
+})

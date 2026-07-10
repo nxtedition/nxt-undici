@@ -1,3 +1,6 @@
+// Regression test for pressure accounting with custom client abort reasons:
+// downstream aborts remain caller cancellations even when the reason is an
+// ordinary Error rather than a DOM-style AbortError.
 import { test } from 'tap'
 import { interceptors } from '../lib/index.js'
 

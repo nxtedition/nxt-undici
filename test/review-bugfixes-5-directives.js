@@ -10,7 +10,8 @@
 //   max-stale (smaller) and min-fresh (larger) — previously only max-age.
 // - present-but-malformed max-age / s-maxage must surface as explicit
 //   lifetime 0 (like invalid Expires), not as absent (which fell through to
-//   Expires / heuristics and over-cached).
+//   Expires / heuristics and over-cached), without letting invalid s-maxage
+//   grant authenticated caching.
 // - immutable (RFC 8246 §2) is NOT a freshness source: it neither defines nor
 //   extends the lifetime, so on its own it yields no lifetime for any status;
 //   freshness must come from s-maxage/max-age/Expires (or, 200-only, an opt-in
@@ -29,6 +30,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { parseCacheControl, parseHttpDate } from '../lib/utils.js'
 import {
+  allowsAuthenticatedCaching,
   determineLifetime,
   computeEntryTimes,
   forbidsRequestDrivenStale,
@@ -90,13 +92,13 @@ test('parseCacheControl: malformed valued no-store/must-revalidate/proxy-revalid
   t.strictSame(parseCacheControl('no-store='), { 'no-store': true }, 'no-store= fails restrictive')
   t.strictSame(
     parseCacheControl('must-revalidate="etag"'),
-    { 'must-revalidate': true },
-    'must-revalidate with value fails restrictive',
+    { 'must-revalidate': false },
+    'invalid must-revalidate remains stale-prohibitive but is not a permission grant',
   )
   t.strictSame(
     parseCacheControl('proxy-revalidate='),
-    { 'proxy-revalidate': true },
-    'proxy-revalidate= fails restrictive',
+    { 'proxy-revalidate': false },
+    'invalid proxy-revalidate remains distinguishable from the valid form',
   )
   // Permission-granting valueless directives keep the opposite (drop) rule.
   t.strictSame(parseCacheControl('public='), {}, 'public= still ignored')
@@ -171,10 +173,14 @@ test('parseCacheControl: duplicated delta-seconds directives keep the conservati
   t.end()
 })
 
-test('parseCacheControl: present-but-malformed max-age/s-maxage surfaces as 0, not absent', (t) => {
+test('parseCacheControl: malformed max-age/s-maxage remains explicitly stale, not absent', (t) => {
   t.strictSame(parseCacheControl('max-age=-1'), { 'max-age': 0 }, 'negative max-age -> 0')
   t.strictSame(parseCacheControl('max-age=100a'), { 'max-age': 0 }, 'trailing junk -> 0')
-  t.strictSame(parseCacheControl('s-maxage=1.5'), { 's-maxage': 0 }, 'fractional s-maxage -> 0')
+  t.strictSame(
+    parseCacheControl('s-maxage=1.5'),
+    { 's-maxage': false },
+    'fractional s-maxage -> invalid/stale sentinel',
+  )
   t.strictSame(
     parseCacheControl('stale-while-revalidate=junk'),
     {},
@@ -195,6 +201,85 @@ test('determineLifetime: malformed max-age no longer falls through to Expires', 
   const headers = { expires: new Date(now + 3600e3).toUTCString() }
   const info = determineLifetime(200, headers, directives, {}, now)
   t.strictSame(info, { lifetime: 0, explicit: true }, 'explicit stale, not 1h of Expires freshness')
+  t.end()
+})
+
+test('authorization permission requires syntactically valid response directives', async (t) => {
+  for (const cacheControl of [
+    'must-revalidate="invalid", max-age=60',
+    's-maxage=invalid, stale-while-revalidate=60',
+  ]) {
+    const server = await startServer((req, res) => {
+      res.writeHead(200, { 'cache-control': cacheControl })
+      res.end('authenticated-body')
+    })
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    const opts = {
+      origin: origin(server),
+      method: 'GET',
+      path: '/auth',
+      headers: { authorization: 'Bearer secret' },
+      cache: { store },
+    }
+
+    await rawRequest(makeDispatch(), opts)
+    await new Promise((resolve) => setImmediate(resolve))
+    t.equal(
+      store.get(undici.util.cache.makeCacheKey(opts)),
+      undefined,
+      `${cacheControl}: authenticated response was not shared`,
+    )
+    store.close()
+    server.close()
+  }
+
+  t.equal(
+    allowsAuthenticatedCaching({ 'must-revalidate': false, 's-maxage': false }),
+    false,
+    'restrictive invalid sentinels do not grant shared caching',
+  )
+  t.equal(
+    allowsAuthenticatedCaching({ 'must-revalidate': true }),
+    true,
+    'valid bare must-revalidate still grants shared caching',
+  )
+
+  // Serve-side guard for a custom/legacy store: a malformed s-maxage marker
+  // must not unlock an authenticated cache hit even if such an entry exists.
+  let originHits = 0
+  const server = await startServer((req, res) => {
+    originHits++
+    res.writeHead(200, { 'cache-control': 'no-store' })
+    res.end('origin-body')
+  })
+  t.teardown(() => server.close())
+  const now = Date.now()
+  const customStore = {
+    get: () => ({
+      body: Buffer.from('cached-secret'),
+      start: 0,
+      end: 13,
+      statusCode: 200,
+      headers: {},
+      cacheControlDirectives: { 's-maxage': false },
+      etag: '',
+      vary: {},
+      cachedAt: now,
+      staleAt: now + 60e3,
+      deleteAt: now + 120e3,
+    }),
+    set() {},
+    delete() {},
+  }
+  const response = await rawRequest(makeDispatch(), {
+    origin: origin(server),
+    method: 'GET',
+    path: '/custom',
+    headers: { authorization: 'Bearer secret' },
+    cache: { store: customStore },
+  })
+  t.equal(response.body, 'origin-body', 'invalid grant from a custom store is bypassed')
+  t.equal(originHits, 1, 'authorized request reached the origin')
   t.end()
 })
 

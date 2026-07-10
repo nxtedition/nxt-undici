@@ -33,3 +33,20 @@ test('RequestHandler honors a falsy abort reason received before onConnect', (t)
   t.equal(reason, 0)
   t.end()
 })
+
+test('RequestHandler honors null as an abort reason', (t) => {
+  const controller = new AbortController()
+  const handler = new RequestHandler({ method: 'GET', body: null, signal: controller.signal }, () =>
+    t.fail('an aborted request must not resolve'),
+  )
+
+  controller.abort(null)
+
+  let reason = Symbol('not called')
+  handler.onConnect((value) => {
+    reason = value
+  })
+
+  t.equal(reason, null)
+  t.end()
+})

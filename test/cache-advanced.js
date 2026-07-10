@@ -611,13 +611,16 @@ test('cache: 5xx responses are not cached', async (t) => {
   t.equal(hits, 2, '5xx responses are never cached')
 })
 
-test('cache: 4xx responses are not cached', async (t) => {
+test('cache: a non-storable 4xx status (403) is not cached', async (t) => {
   t.plan(1)
   let hits = 0
   const server = await startServer((req, res) => {
     hits++
-    res.writeHead(404, { 'cache-control': 's-maxage=60' })
-    res.end('not found')
+    // 403 is a 4xx that is NOT on the cacheable-status list (unlike 404/410),
+    // so it is never stored even with explicit freshness. See
+    // test/cache-storable-statuses.js for the 404/410 negative-caching path.
+    res.writeHead(403, { 'cache-control': 's-maxage=60' })
+    res.end('forbidden')
   })
   t.teardown(server.close.bind(server))
 
@@ -633,7 +636,7 @@ test('cache: 4xx responses are not cached', async (t) => {
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, '4xx responses are never cached')
+  t.equal(hits, 2, 'a non-storable 4xx status is never cached')
 })
 
 // ---------------------------------------------------------------------------

@@ -1228,10 +1228,12 @@ test('cache: CacheHandler store doc tags an absent key method as null', async (t
   )
 
   handler.onConnect(() => {})
-  handler.onHeaders(404, {}, () => {})
+  // 500 is not on the cacheable-status list, so it skips with reason 'status'
+  // (404 is now storable with explicit freshness — see cache-storable-statuses).
+  handler.onHeaders(500, {}, () => {})
   handler.onComplete(null)
 
-  t.equal(store.sets.length, 0, '404 is not stored')
+  t.equal(store.sets.length, 0, '500 is not stored')
   t.equal(docs.length, 1, 'one cache-store doc')
   const doc = docs[0]
   t.equal(doc.op, 'undici:cache-store')
@@ -1239,5 +1241,5 @@ test('cache: CacheHandler store doc tags an absent key method as null', async (t
   t.equal(doc.method, null, 'absent method tagged as null')
   t.equal(doc.stored, false)
   t.equal(doc.reason, 'status')
-  t.equal(doc.statusCode, 404)
+  t.equal(doc.statusCode, 500)
 })

@@ -30,6 +30,10 @@ test('response errors recognize JSON and text media types case-insensitively', (
   t.strictSame(problem.body, { reason: 'bad input' })
   t.equal(problem.reason, 'bad input')
 
+  const sequence = captureError('application/json-seq', '{"code":"SEQUENCE"}')
+  t.strictSame(sequence.body, { code: 'SEQUENCE' })
+  t.equal(sequence.code, 'SEQUENCE')
+
   const text = captureError('Text/Plain; Charset=UTF-8', 'plain error')
   t.equal(text.body, 'plain error')
   t.end()

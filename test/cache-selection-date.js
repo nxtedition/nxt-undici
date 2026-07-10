@@ -1,7 +1,16 @@
 import { test } from 'tap'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+function tempDb(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-selection-date-'))
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }))
+  return path.join(dir, 'cache.sqlite')
+}
 
 test('store chooses the most recent matching response by Date, not write order', async (t) => {
   const store = new SqliteCacheStore({ location: ':memory:' })
@@ -138,4 +147,69 @@ test('pending replacements immediately supersede their persisted representation'
   // persisted row immediately even when its response Date sorts earlier.
   store.set(key, value('tombstone', new Date(now - 120e3).toUTCString(), now - 60e3))
   t.equal(store.get(key), undefined, 'pending tombstone shadows the persisted row')
+})
+
+test('many pending identities suppress only their exact persisted representations', (t) => {
+  const location = tempDb(t)
+  const key = {
+    origin: 'https://example.com',
+    method: 'GET',
+    path: '/many-pending',
+    headers: {},
+  }
+  const now = Date.now()
+  const value = (body, date, vary, deleteAt = now + 7200e3) => ({
+    body: Buffer.from(body),
+    start: 0,
+    end: body.length,
+    statusCode: 200,
+    statusMessage: 'OK',
+    headers: { date },
+    cacheControlDirectives: { 'max-age': 3600 },
+    vary,
+    cachedAt: now,
+    staleAt: now + 3600e3,
+    deleteAt,
+  })
+
+  let store = new SqliteCacheStore({ location })
+  t.teardown(() => store.close())
+  for (let i = 0; i < 64; i++) {
+    store.set(key, value(`persisted-${i}`, new Date(now).toUTCString(), { [`x-${i}`]: null }))
+  }
+  // This neighboring selector overlaps requests carrying x-63 but is not the
+  // same stored representation as { x-63: null }.
+  store.set(
+    key,
+    value('distinct-neighbor', new Date(now + 60e3).toUTCString(), {
+      'x-63': 'present',
+      extra: null,
+    }),
+  )
+  store.close()
+
+  store = new SqliteCacheStore({ location })
+  for (let i = 0; i < 64; i++) {
+    store.set(
+      key,
+      value(
+        `pending-${i}`,
+        new Date(now - 60e3).toUTCString(),
+        { [`x-${i}`]: null },
+        i === 63 ? now - 60e3 : undefined,
+      ),
+    )
+  }
+
+  t.equal(
+    store.get(key).body.toString(),
+    'pending-62',
+    'exact replacements hide newer persisted rows and the final tombstone is not served',
+  )
+  t.equal(
+    store.get({ ...key, headers: { 'x-63': 'present' } }).body.toString(),
+    'distinct-neighbor',
+    'a neighboring serialized Vary selector is not over-suppressed',
+  )
+  t.end()
 })

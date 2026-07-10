@@ -709,8 +709,10 @@ test('cache: opts.query with an empty path folds onto "/"', async (t) => {
 // Trace-gated read-path branches
 // ---------------------------------------------------------------------------
 
-test('cache: if-range request bypasses the cache and emits a bypass doc', async (t) => {
+test('cache: if-range request is a read miss but keeps the write path (#74)', async (t) => {
+  let hits = 0
   const server = await startServer((req, res) => {
+    hits++
     res.writeHead(200, { 'cache-control': 'max-age=60' })
     res.end('ok')
   })
@@ -729,11 +731,85 @@ test('cache: if-range request bypasses the cache and emits a bypass doc', async 
   })
 
   t.equal(statusCode, 200)
+  // Read side is a miss (not served from cache), but the CacheHandler is
+  // attached, so the answer is stored for later requests.
   const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
   t.equal(lookups.length, 1)
-  t.equal(lookups[0].result, 'bypass')
+  t.equal(lookups[0].result, 'miss')
   t.equal(lookups[0].reason, 'conditional')
   t.equal(lookups[0].statusCode, null)
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1)
+  t.equal(stores[0].stored, true, 'the if-range answer is stored')
+
+  // A subsequent plain GET is served from the entry written by the if-range
+  // request — the origin is not contacted again.
+  const second = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  })
+  t.equal(second.statusCode, 200)
+  t.equal(hits, 1, 'the second GET is served from the if-range write-back')
+})
+
+test('cache: if-range request with no-store does not store (#74)', async (t) => {
+  const server = await startServer((req, res) => {
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const { statusCode } = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'if-range': '"abc"', 'cache-control': 'no-store' },
+    cache: { store },
+    trace: writer,
+  })
+
+  t.equal(statusCode, 200)
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+  t.equal(lookups[0].result, 'miss')
+  t.equal(lookups[0].reason, 'conditional')
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 0, 'request no-store forbids storing the if-range answer')
+})
+
+test('cache: if-match / if-unmodified-since still bypass entirely', async (t) => {
+  for (const header of ['if-match', 'if-unmodified-since']) {
+    const server = await startServer((req, res) => {
+      res.writeHead(200, { 'cache-control': 'max-age=60' })
+      res.end('ok')
+    })
+    t.teardown(server.close.bind(server))
+
+    const writer = makeWriter()
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    const dispatch = makeDispatch()
+    const { statusCode } = await rawRequest(dispatch, {
+      origin: origin(server),
+      path: '/',
+      method: 'GET',
+      headers: { [header]: header === 'if-match' ? '"abc"' : 'Wed, 21 Oct 2015 07:28:00 GMT' },
+      cache: { store },
+      trace: writer,
+    })
+
+    t.equal(statusCode, 200)
+    const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+    t.equal(lookups.length, 1)
+    t.equal(lookups[0].result, 'bypass', `${header} bypasses the read path`)
+    t.equal(lookups[0].reason, 'conditional')
+    const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+    t.equal(stores.length, 0, `${header} bypasses the write path (no store doc)`)
+  }
 })
 
 // A store holding a stale 206 range entry. SqliteCacheStore never returns a

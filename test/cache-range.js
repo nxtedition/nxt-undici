@@ -9,7 +9,8 @@
 //   against a stored 200). There is no slicing of wider entries and no
 //   suffix/multi-range parsing — those go to the origin.
 // - A request without Range never sees a stored 206; a stale 206 is never
-//   conditionally revalidated (refetched instead); If-Range bypasses entirely.
+//   conditionally revalidated (refetched instead); If-Range bypasses the read
+//   path but its 200/206 answer is still written back (#74).
 // These tests lock in the safe half of that contract: no wrong-window serves,
 // no 206 to a non-range request, no partial bodies masquerading as complete.
 import { test } from 'tap'
@@ -418,8 +419,8 @@ test('range: stale 206 served under request max-stale', async (t) => {
   t.equal(origin.hits, 1, 'served stale from cache under max-stale')
 })
 
-test('range: If-Range requests bypass the cache in both directions', async (t) => {
-  t.plan(3)
+test('range: If-Range requests bypass the read path but store the 206 answer (#74)', async (t) => {
+  t.plan(4)
   const origin = rangeServer({ etag: '"tag-1"' })
   const server = await startServer(origin.handler)
   t.teardown(server.close.bind(server))
@@ -430,16 +431,21 @@ test('range: If-Range requests bypass the cache in both directions', async (t) =
   await rawRequest(dispatch, base)
   await flush()
 
+  // The If-Range request is not served from the fresh cached 200 (the read
+  // path bypasses), so the origin answers a fresh 206...
   const ifRange = await rawRequest(dispatch, {
     ...base,
     headers: { range: 'bytes=2-5', 'if-range': '"tag-1"' },
   })
   t.equal(ifRange.statusCode, 206, 'origin answered the If-Range request')
   t.equal(origin.hits, 2, 'bypassed the fresh cached 200')
+  await flush()
 
-  // And the bypassed 206 must not have been stored either.
-  await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
-  t.equal(origin.hits, 3, 'If-Range response was not written back')
+  // ...but that 206 partial IS written back, so a later exact-window range
+  // request is served from cache without contacting the origin (#74).
+  const cached = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(cached.body, '2345', 'the stored If-Range 206 window is served')
+  t.equal(origin.hits, 2, 'If-Range 206 answer was written back')
 })
 
 test('range: Vary keeps 206 windows apart per variant', async (t) => {

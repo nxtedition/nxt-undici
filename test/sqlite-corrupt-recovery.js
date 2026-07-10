@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
-import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
+import { SqliteCacheStore, hasForeignTables } from '../lib/sqlite-cache-store.js'
 
 function makeKey(overrides = {}) {
   return { origin: 'https://example.com', method: 'GET', path: '/test', ...overrides }
@@ -169,6 +169,52 @@ test('a non-corruption open error still propagates (not swallowed as recovery)',
     /unable to open database file/,
     'construction rethrows a non-corruption open error',
   )
+  t.end()
+})
+
+// The own-file guard (issue #70 review finding #1): destructive recovery must
+// never unlink a file that holds non-cache tables. hasForeignTables() is the
+// decision the CORRUPT path gates on. Note: on this SQLite build, localized
+// b-tree corruption surfaces at query time, not at construction (that's the
+// deferred lazy-recovery follow-up), so the CORRUPT-with-foreign construction
+// path can't be triggered portably here — hence the guard is unit-tested.
+test('hasForeignTables: false for a cache-only database', async (t) => {
+  const dbPath = tmpDb(t, 'own-cacheonly')
+  const store = new SqliteCacheStore({ location: dbPath })
+  store.set(makeKey(), makeValue())
+  await flush()
+  store.close()
+
+  t.notOk(hasForeignTables(dbPath, undefined, 20), 'cache-only file is owned exclusively')
+  t.end()
+})
+
+test('hasForeignTables: true when a non-cache table cohabits the file', async (t) => {
+  const dbPath = tmpDb(t, 'own-foreign')
+  const store = new SqliteCacheStore({ location: dbPath })
+  store.set(makeKey(), makeValue())
+  await flush()
+  store.close()
+
+  const d = new DatabaseSync(dbPath)
+  d.exec(
+    `CREATE TABLE userData (k TEXT PRIMARY KEY, v TEXT); INSERT INTO userData VALUES ('keep','me')`,
+  )
+  d.close()
+
+  t.ok(
+    hasForeignTables(dbPath, undefined, 20),
+    'foreign table detected — recovery must not delete this file',
+  )
+  t.end()
+})
+
+test('hasForeignTables: true (conservative) when the schema cannot be read', async (t) => {
+  const dbPath = tmpDb(t, 'own-unreadable')
+  // Not a SQLite database at all: we cannot prove exclusive ownership, so the
+  // guard must err toward preserving whatever the bytes are.
+  fs.writeFileSync(dbPath, Buffer.from('not a database'))
+  t.ok(hasForeignTables(dbPath, undefined, 20), 'unreadable schema treated as foreign')
   t.end()
 })
 

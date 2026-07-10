@@ -1,7 +1,8 @@
-// Regression tests for the RFC 8246 'immutable' TTL bug: immutable marks the
-// body as unchanging during the freshness lifetime — it does not define or
-// extend that lifetime. An explicit s-maxage/max-age must win; immutable only
-// supplies a long default TTL when no explicit lifetime is present.
+// Regression tests for RFC 8246 'immutable': it marks the body as unchanging
+// during the freshness lifetime — it neither defines nor extends that lifetime
+// (§2), so it is NOT a freshness source. An explicit s-maxage/max-age sets the
+// lifetime; immutable alone (no explicit/heuristic/default lifetime) is not
+// cacheable.
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
@@ -53,6 +54,7 @@ test('cache: immutable does not override explicit max-age (expires on schedule)'
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,
@@ -73,7 +75,7 @@ test('cache: immutable does not override explicit max-age (expires on schedule)'
   t.equal(entry.staleAt - entry.cachedAt, 5000, 'freshness is max-age, not immutable')
 })
 
-test('cache: immutable alone still caches with a long default TTL', async (t) => {
+test('cache: immutable alone is not cached (immutable is not a freshness source)', async (t) => {
   t.plan(2)
   let hits = 0
   const server = await startServer((req, res) => {
@@ -84,6 +86,7 @@ test('cache: immutable alone still caches with a long default TTL', async (t) =>
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,
@@ -95,11 +98,13 @@ test('cache: immutable alone still caches with a long default TTL', async (t) =>
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 1, 'immutable without explicit lifetime is still cached')
+  // RFC 8246 §2: immutable does not define a lifetime, so with no
+  // max-age/s-maxage/Expires (and no heuristic/defaultTTL configured) the
+  // response has no freshness and is not stored — the origin is hit each time.
+  t.equal(hits, 2, 'immutable without a lifetime is not cached')
 
-  // The ~1 year immutable default is capped by maxEntryTTL (default 30 days).
   const entry = store.get(undici.util.cache.makeCacheKey(opts))
-  t.equal(entry.deleteAt - entry.cachedAt, 30 * 24 * 3600 * 1000, 'TTL capped at maxEntryTTL')
+  t.equal(entry, undefined, 'nothing stored for immutable-only')
 })
 
 test('cache: explicit s-maxage wins over immutable', async (t) => {
@@ -113,6 +118,7 @@ test('cache: explicit s-maxage wins over immutable', async (t) => {
   t.teardown(server.close.bind(server))
 
   const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
   const dispatch = makeDispatch()
   const opts = {
     origin: `http://0.0.0.0:${server.address().port}`,

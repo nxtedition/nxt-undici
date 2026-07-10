@@ -193,3 +193,66 @@ test('serveFromCache defers delivery while the handler is paused', (t) => {
   t.strictSame(events2, ['headers', 'data', 'complete'], 'resume delivers completion')
   t.end()
 })
+
+test('serveFromCache does not deadlock when the handler resumes synchronously before returning false', (t) => {
+  const entry = {
+    statusCode: 200,
+    headers: { 'cache-control': 'max-age=60' },
+    body: Buffer.from('hello'),
+    cachedAt: Date.now(),
+  }
+
+  // Synchronous resume() inside onHeaders, THEN return false. `deferred` isn't
+  // set yet, so the resume must be remembered and delivery must continue
+  // rather than parking a continuation nothing will fire.
+  const events = []
+  serveFromCache(
+    entry,
+    {},
+    {
+      onConnect() {},
+      onHeaders(sc, h, resume) {
+        events.push('headers')
+        resume()
+        return false
+      },
+      onData(chunk) {
+        events.push(`data:${chunk}`)
+        return true
+      },
+      onComplete() {
+        events.push('complete')
+      },
+      onError() {},
+    },
+  )
+  t.strictSame(events, ['headers', 'data:hello', 'complete'], 'delivery completed, no deadlock')
+
+  // Same hazard one stage later: the handler stashes the resume from
+  // onHeaders and calls it synchronously inside onData before returning false.
+  const events2 = []
+  let captured
+  serveFromCache(
+    entry,
+    {},
+    {
+      onConnect() {},
+      onHeaders(sc, h, resume) {
+        captured = resume
+        events2.push('headers')
+        return true
+      },
+      onData(chunk) {
+        events2.push('data')
+        captured()
+        return false
+      },
+      onComplete() {
+        events2.push('complete')
+      },
+      onError() {},
+    },
+  )
+  t.strictSame(events2, ['headers', 'data', 'complete'], 'onData synchronous resume also completes')
+  t.end()
+})

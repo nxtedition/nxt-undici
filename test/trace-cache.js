@@ -348,3 +348,204 @@ test('trace-cache: non-cacheable status emits a skipped cache-store doc (reason 
   t.equal(stores[0].stored, false)
   t.equal(stores[0].reason, 'status')
 })
+
+// ---------------------------------------------------------------------------
+// background stale-while-revalidate refresh: the stale serve emits the one
+// lookup doc; the fire-and-forget refresh emits the cache-store doc for its
+// store write, tagged with the triggering request's id — no second lookup doc.
+// ---------------------------------------------------------------------------
+
+const settle = () => new Promise((r) => setImmediate(r))
+
+// Poll for a condition with a bounded deadline so a never-firing background
+// refresh fails the test instead of hanging it.
+async function waitFor(predicate, { timeout = 2000, label = 'condition' } = {}) {
+  const deadline = Date.now() + timeout
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${label}`)
+    }
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
+function seedStale(store, origin, { directives, etag = '' } = {}) {
+  const now = Date.now()
+  const body = Buffer.from('stale-body')
+  const headers = { 'cache-control': 'max-age=5, stale-while-revalidate=600' }
+  if (etag) {
+    headers.etag = etag
+  }
+  store.set(
+    { origin, method: 'GET', path: '/', headers: {} },
+    {
+      body,
+      start: 0,
+      end: body.length,
+      statusCode: 200,
+      statusMessage: 'OK',
+      headers,
+      cacheControlDirectives: directives ?? { 'max-age': 5, 'stale-while-revalidate': 600 },
+      etag,
+      vary: {},
+      cachedAt: now - 10e3,
+      staleAt: now - 5e3,
+      deleteAt: now + 3600e3,
+    },
+  )
+}
+
+test('trace-cache: background SWR refresh (replacement) emits a store doc, no extra lookup', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('fresh-body')
+  })
+  t.teardown(server.close.bind(server))
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  seedStale(store, origin)
+  await settle()
+
+  const writer = makeWriter()
+  const res = await request(origin, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+  })
+  t.equal(await res.body.text(), 'stale-body', 'the stale entry is served immediately')
+
+  await waitFor(() => writer.docs.some((doc) => doc.op === 'undici:cache-store'), {
+    label: 'background refresh store doc',
+  })
+  t.equal(hits, 1, 'the background refresh contacted the origin')
+
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1, 'only the stale serve emits a lookup doc — the refresh emits none')
+  t.equal(lookups[0].result, 'hit')
+  t.equal(lookups[0].reason, 'stale-while-revalidate')
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1, 'the background refresh emits one store doc for the replacement')
+
+  const [stored] = stores
+  t.equal(stored.id, lookups[0].id, 'the store doc carries the triggering request id')
+  t.equal(stored.method, 'GET')
+  t.equal(stored.url, `${origin}/`)
+  t.equal(stored.statusCode, 200)
+  t.equal(stored.stored, true)
+  t.equal(stored.reason, null)
+  t.equal(stored.sizeBytes, 'fresh-body'.length)
+  t.equal(stored.ttlSec, 60)
+  t.equal(stored.err, null)
+})
+
+// ---------------------------------------------------------------------------
+// background SWR refresh answered by a 304 → the freshen store write is visible
+// as a cache-store doc, mirroring the replacement path above.
+// ---------------------------------------------------------------------------
+
+test('trace-cache: background SWR refresh (304 freshen) emits a store doc', async (t) => {
+  let conditional = false
+  const server = await startServer((req, res) => {
+    conditional = req.headers['if-none-match'] === '"v1"'
+    res.writeHead(304, { etag: '"v1"', 'cache-control': 'max-age=60' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  seedStale(store, origin, { etag: '"v1"' })
+  await settle()
+
+  const writer = makeWriter()
+  const res = await request(origin, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+  })
+  t.equal(await res.body.text(), 'stale-body')
+
+  await waitFor(() => writer.docs.some((doc) => doc.op === 'undici:cache-store'), {
+    label: 'background 304 freshen store doc',
+  })
+  t.ok(conditional, 'the refresh sent a conditional request')
+
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1, 'the refresh adds no lookup doc')
+  t.equal(lookups[0].reason, 'stale-while-revalidate')
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1, 'the 304-freshen store write emits one store doc')
+  t.equal(stores[0].id, lookups[0].id)
+  t.equal(stores[0].statusCode, 200, 'the freshened entry keeps its stored status')
+  t.equal(stores[0].stored, true)
+  t.equal(stores[0].reason, null)
+  t.equal(stores[0].sizeBytes, 'stale-body'.length)
+  t.equal(stores[0].err, null)
+})
+
+// ---------------------------------------------------------------------------
+// synchronous 304 revalidation now emits a freshen cache-store doc alongside
+// its lookup doc, matching the full-replacement path (which stores via
+// CacheHandler). Regression guard for the freshen store-doc gap.
+// ---------------------------------------------------------------------------
+
+test('trace-cache: synchronous 304 freshen emits a cache-store doc', async (t) => {
+  const server = await startServer((req, res) => {
+    res.writeHead(304, { etag: '"v1"', 'cache-control': 'max-age=60' })
+    res.end()
+  })
+  t.teardown(server.close.bind(server))
+  const origin = `http://127.0.0.1:${server.address().port}`
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  // A plain stale entry (no stale-while-revalidate) forces synchronous
+  // revalidation rather than a background refresh.
+  const now = Date.now()
+  const body = Buffer.from('stale-body')
+  store.set(
+    { origin, method: 'GET', path: '/', headers: {} },
+    {
+      body,
+      start: 0,
+      end: body.length,
+      statusCode: 200,
+      statusMessage: 'OK',
+      headers: { etag: '"v1"', 'cache-control': 'max-age=5' },
+      cacheControlDirectives: { 'max-age': 5 },
+      etag: '"v1"',
+      vary: {},
+      cachedAt: now - 10e3,
+      staleAt: now - 5e3,
+      deleteAt: now + 3600e3,
+    },
+  )
+  await settle()
+
+  const writer = makeWriter()
+  const res = await request(origin, {
+    trace: writer,
+    cache: { store },
+    dispatcher: makeDispatcher(t),
+  })
+  t.equal(await res.body.text(), 'stale-body')
+
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+  t.equal(lookups[0].result, 'hit')
+  t.equal(lookups[0].reason, 'revalidated')
+
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1, 'the freshen store write is now traced')
+  t.equal(stores[0].id, lookups[0].id)
+  t.equal(stores[0].statusCode, 200)
+  t.equal(stores[0].stored, true)
+  t.equal(stores[0].reason, null)
+})

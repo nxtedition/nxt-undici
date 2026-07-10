@@ -29,10 +29,12 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { parseCacheControl, parseHttpDate } from '../lib/utils.js'
 import {
+  determineAge,
   determineLifetime,
   computeEntryTimes,
   forbidsRequestDrivenStale,
 } from '../lib/interceptor/cache/freshness.js'
+import { CacheHandler } from '../lib/interceptor/cache/cache-handler.js'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
 import undici from '@nxtedition/undici'
 
@@ -238,6 +240,48 @@ test('must-understand overrides its no-store fallback for an understood status',
 // ---------------------------------------------------------------------------
 // freshness.js
 // ---------------------------------------------------------------------------
+
+test('determineAge: corrected age includes request-to-response delay', (t) => {
+  const responseTime = Date.UTC(2026, 6, 10, 12, 0, 0)
+  const requestTime = responseTime - 5e3
+  t.equal(
+    determineAge(
+      { age: '7', date: new Date(responseTime).toUTCString() },
+      responseTime,
+      requestTime,
+    ),
+    12,
+    'Age: 7 plus a 5-second response delay yields corrected age 12',
+  )
+
+  const sets = []
+  const store = { set: (key, value) => sets.push({ key, value }) }
+  const handler = new CacheHandler(
+    { origin: 'http://example.test', method: 'GET', path: '/', headers: {} },
+    {
+      store,
+      requestTime: Date.now() - 5e3,
+      handler: {
+        onConnect() {},
+        onHeaders() {},
+        onComplete() {},
+      },
+    },
+  )
+  handler.onConnect(() => {})
+  handler.onHeaders(
+    200,
+    {
+      age: '0',
+      date: new Date().toUTCString(),
+      'cache-control': 'max-age=3',
+    },
+    () => {},
+  )
+  handler.onComplete({})
+  t.equal(sets.length, 0, 'a slow response already older than max-age is not stored as fresh')
+  t.end()
+})
 
 test('determineLifetime: immutable is not a freshness source (yields no lifetime)', (t) => {
   const now = Date.now()

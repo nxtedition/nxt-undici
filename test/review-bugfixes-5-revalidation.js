@@ -17,6 +17,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
+import { parseHttpDate } from '../lib/utils.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
@@ -131,6 +132,36 @@ test('304 freshening honors the validating response Age header', async (t) => {
     hits > hitsBefore,
     'second request revalidates again: Age 100 > max-age 60 means the freshened entry is still stale',
   )
+  t.end()
+})
+
+test('304 freshening appends a missing Date at validation receipt', async (t) => {
+  const server = await startServer((req, res) => {
+    res.sendDate = false
+    res.writeHead(304, { etag: '"v1"', 'cache-control': 'max-age=60' })
+    res.end()
+  })
+  t.teardown(() => server.close())
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const opts = { origin: origin(server), method: 'GET', path: '/x', headers: {}, cache: { store } }
+
+  seedStale(store, origin(server))
+  await settle()
+  const earliestReceipt = Date.now() - 1000
+
+  const response = await rawRequest(dispatch, opts)
+  const receivedDate = parseHttpDate(response.headers.date)?.getTime()
+  t.ok(
+    receivedDate != null && receivedDate >= earliestReceipt && receivedDate <= Date.now(),
+    'served metadata carries the 304 receipt-time Date',
+  )
+
+  await settle()
+  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  t.equal(entry.headers.date, response.headers.date, 'the generated 304 Date updated storage')
   t.end()
 })
 

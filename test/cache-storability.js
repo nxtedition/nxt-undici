@@ -84,6 +84,39 @@ test('parseHttpDate: accepts the three RFC 9110 formats, rejects everything else
   t.end()
 })
 
+test('storability: a missing Date is appended at receipt before forwarding and storage', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.sendDate = false
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('body')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  t.teardown(() => store.close())
+  const dispatch = makeDispatch()
+  const opts = { origin: origin(server), path: '/', method: 'GET', headers: {}, cache: { store } }
+  const earliestReceipt = Date.now() - 1000
+
+  const first = await rawRequest(dispatch, opts)
+  const receivedDate = parseHttpDate(first.headers.date)?.getTime()
+  t.ok(
+    receivedDate != null && receivedDate >= earliestReceipt && receivedDate <= Date.now(),
+    'forwarded response carries a receipt-time Date',
+  )
+
+  await flush()
+  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  t.equal(entry.headers.date, first.headers.date, 'the same generated Date is stored')
+
+  const second = await rawRequest(dispatch, opts)
+  t.equal(hits, 1, 'the dated response is reusable from cache')
+  t.equal(second.headers.date, first.headers.date, 'cache hit preserves the generated Date')
+  t.end()
+})
+
 // ---------------------------------------------------------------------------
 // Expires fallback (RFC 9111 §4.2.1 / §5.3)
 // ---------------------------------------------------------------------------

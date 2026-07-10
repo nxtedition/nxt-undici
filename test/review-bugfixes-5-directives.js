@@ -206,7 +206,7 @@ test('determineLifetime: immutable applies to every admitted status (like a larg
   // immutable is origin-sent, so — like s-maxage/max-age/Expires — it is NOT
   // status-gated; it grants the same lifetime to every status CacheHandler
   // admits. Only the cache-invented heuristic/defaultTTL lifetimes are 200-only.
-  for (const statusCode of [200, 206, 307]) {
+  for (const statusCode of [200, 206, 301, 307, 308, 404, 410]) {
     const info = determineLifetime(statusCode, {}, { immutable: true }, {}, now)
     t.ok(info && info.lifetime > 0, `immutable grants freshness for ${statusCode}`)
     // immutable is origin-provided, so it is explicit (like max-age), not a

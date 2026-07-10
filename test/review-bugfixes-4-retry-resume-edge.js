@@ -14,20 +14,23 @@ import { compose, interceptors, request } from '../lib/index.js'
 // 2. Flat [name, value, ...] array request headers (legal for direct
 //    dispatch()/compose() users) must be normalized before the resume
 //    re-dispatch — not spread into garbage '0'/'1' header names.
-// 3. When a resume at pos 0 is answered with a full 200 (server ignored
-//    Range), the NEW response's etag/content-length must replace the stale
-//    resume metadata for any subsequent resume.
+// 3. A resume at pos 0 answered with a full 200 whose strong etag DIFFERS from
+//    the if-match the resume carried must be declined, not spliced: its body
+//    describes a different representation than the first-attempt headers that
+//    were already forwarded downstream (and, behind a cache, already stored)
+//    — see issue #69.
 // 4. When a resume attempt is answered with an unexpected status (e.g. 503),
 //    the surfaced error must describe THAT response — not only the stale
 //    error from the previous failure.
 // 5. A pos 0 resume with no usable etag (e.g. the server sent a weak etag,
-//    which is discarded) must not send an if-match header at all — a null
-//    etag would go on the wire as an invalid empty `if-match:` value.
-// 6. An if-match written by a PREVIOUS resume attempt must not leak into the
-//    next resume once #etag has been cleared (full-200 restart with a weak
-//    etag) — the re-dispatch spreads the reassigned opts.headers, so the
-//    stale validator persists unless it is deleted before the conditional
-//    re-set.
+//    which is discarded) sends no if-match — so a full-200 restart cannot be
+//    proven to match the already-forwarded headers and must be declined rather
+//    than spliced (issue #69). The resume request itself still omits if-match
+//    (a null etag would go on the wire as an invalid empty `if-match:` value).
+// 6. A full-200 restart that echoes the SAME strong etag as the resume's
+//    if-match is provably the same representation, so it is accepted and a
+//    subsequent failure resumes from where the restart left off, still
+//    validating against that etag.
 
 // ---------------------------------------------------------------------------
 // Bug 1: non-positive content-length + error between headers and complete.
@@ -183,37 +186,34 @@ test('retry: flat-array request headers are normalized on range resume re-dispat
 })
 
 // ---------------------------------------------------------------------------
-// Bug 3: full-200 restart of a resume must refresh #end/#etag from the NEW
-// response, so a second failure resumes against the new representation.
-// verify: false because the consumer intentionally receives more bytes than
-// the first response's content-length announced (the restart is longer).
+// Bug 3 (issue #69): a full-200 restart of a resume whose strong etag DIFFERS
+// from the if-match carried must be declined, not spliced. The first attempt's
+// headers were already forwarded downstream (and, behind a cache, used to build
+// the stored entry); splicing a body from a different representation onto them
+// would persist the first attempt's headers/cache-control/TTL/validators with
+// the second attempt's body.
 // ---------------------------------------------------------------------------
 
-test('retry: full-200 restart refreshes resume metadata (new etag/content-length)', async (t) => {
-  t.plan(4)
+test('retry: full-200 restart with a changed etag is declined, not spliced', async (t) => {
+  t.plan(3)
 
   let attempts = 0
   const server = createServer((req, res) => {
     attempts++
     if (attempts === 1) {
       // Headers only — no body bytes forwarded — then die, so the resume
-      // starts at pos 0.
+      // starts at pos 0 holding the strong etag "v1".
       res.writeHead(200, { 'content-length': '10', etag: '"v1"' })
       res.flushHeaders()
       setTimeout(() => res.destroy(), 50)
-    } else if (attempts === 2) {
-      t.equal(req.headers['if-match'], '"v1"', 'first resume validates against the old etag')
-      // Server ignores Range and restarts from scratch with a NEW etag and a
-      // NEW (longer) content-length, then dies mid-body.
-      res.writeHead(200, { 'content-length': '20', etag: '"v2"' })
-      res.write('AAAAA')
-      setTimeout(() => res.destroy(), 50)
     } else {
-      // The second resume must be based on the restarted response's metadata.
-      t.equal(req.headers['if-match'], '"v2"', 'second resume validates against the NEW etag')
-      t.equal(req.headers.range, 'bytes=5-19', 'second resume range uses the NEW content-length')
-      res.writeHead(206, { 'content-range': 'bytes 5-19/20', 'content-length': '15', etag: '"v2"' })
-      res.end('BBBBBBBBBBBBBBB')
+      t.equal(req.headers['if-match'], '"v1"', 'resume validates against the first etag')
+      // A compliant origin answers if-match against a CHANGED representation
+      // with 412; this one ignores it and restarts a full 200 with a DIFFERENT
+      // strong etag. Splicing that body onto the already-forwarded first-attempt
+      // headers must be declined.
+      res.writeHead(200, { 'content-length': '10', etag: '"v2"' })
+      res.end('helloworld')
     }
   })
   t.teardown(server.close.bind(server))
@@ -222,10 +222,13 @@ test('retry: full-200 restart refreshes resume metadata (new etag/content-length
 
   const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
     retry: () => true,
-    verify: false,
   })
-  const text = await body.text()
-  t.equal(text, 'AAAAA' + 'BBBBBBBBBBBBBBB', 'restarted body is forwarded seamlessly')
+  await t.rejects(
+    body.text(),
+    /Response retry failed/,
+    'the mismatched restart is declined instead of spliced',
+  )
+  t.equal(attempts, 2, 'initial attempt + one declined resume attempt')
 })
 
 // ---------------------------------------------------------------------------
@@ -272,13 +275,15 @@ test('retry: resume attempt answered with 503 surfaces the 503, not the stale pr
 })
 
 // ---------------------------------------------------------------------------
-// Bug 5: pos 0 resume without a usable etag must not send if-match.
-// A weak etag is discarded by the retry handler (not byte-comparable), so the
-// resume re-dispatch holds no etag — writing it unconditionally sends an
-// invalid empty `if-match:` header on the wire.
+// Bug 5 (issue #69): a pos 0 resume without a usable etag sends no if-match, so
+// a full-200 restart cannot be proven to be the same representation as the
+// already-forwarded headers — it must be declined rather than spliced. The
+// resume request itself still omits if-match (a weak etag is discarded by the
+// retry handler, and a null etag would go on the wire as an invalid empty
+// `if-match:` value).
 // ---------------------------------------------------------------------------
 
-test('retry: pos 0 resume without a usable etag omits the if-match header', async (t) => {
+test('retry: pos 0 restart without a usable etag is declined (and sends no if-match)', async (t) => {
   t.plan(4)
 
   let attempts = 0
@@ -291,8 +296,10 @@ test('retry: pos 0 resume without a usable etag omits the if-match header', asyn
       res.flushHeaders()
       setTimeout(() => res.destroy(), 50)
     } else {
-      t.notOk('if-match' in req.headers, 'no if-match header on the wire')
+      t.notOk('if-match' in req.headers, 'no if-match header on the wire (nothing to validate)')
       t.equal(req.headers.range, 'bytes=0-4', 'resume still requests the full range')
+      // No validator was sent, so this full 200 cannot be proven to match the
+      // already-forwarded first-attempt headers — it must be declined.
       res.writeHead(200, { 'content-length': '5' })
       res.end('hello')
     }
@@ -304,20 +311,22 @@ test('retry: pos 0 resume without a usable etag omits the if-match header', asyn
   const { body } = await request(`http://0.0.0.0:${server.address().port}`, {
     retry: () => true,
   })
-  const text = await body.text()
-  t.equal(text, 'hello', 'body delivered after the etag-less pos 0 resume')
-  t.equal(attempts, 2, 'initial attempt + one resume attempt')
+  await t.rejects(
+    body.text(),
+    /Response retry failed/,
+    'the unvalidated restart is declined instead of spliced',
+  )
+  t.equal(attempts, 2, 'initial attempt + one declined resume attempt')
 })
 
 // ---------------------------------------------------------------------------
-// Bug 6: a stale if-match from a previous resume attempt must not leak into
-// the next resume after #etag was cleared. The resume re-dispatch REASSIGNS
-// this.#opts with the if-match merged into headers; the next resume spreads
-// those headers, so the old validator survives unless deleted before the
-// conditional re-set.
+// Bug 6 (issue #69): a full-200 restart that echoes the SAME strong etag as the
+// resume's if-match is provably the same representation, so it is accepted; a
+// subsequent failure then resumes from where the restart left off, still
+// validating against that etag.
 // ---------------------------------------------------------------------------
 
-test('retry: stale if-match from a previous resume is not sent once the etag is cleared', async (t) => {
+test('retry: full-200 restart echoing the same strong etag is accepted and resumes', async (t) => {
   t.plan(5)
 
   let attempts = 0
@@ -331,18 +340,18 @@ test('retry: stale if-match from a previous resume is not sent once the etag is 
       setTimeout(() => res.destroy(), 50)
     } else if (attempts === 2) {
       t.equal(req.headers['if-match'], '"v1"', 'first resume validates against the held etag')
-      // Full-200 restart with a WEAK etag → the retry handler clears #etag.
-      // Die again before any body byte, forcing a second pos 0 resume.
-      res.writeHead(200, { 'content-length': '10', etag: 'W/"v2"' })
-      res.flushHeaders()
+      // Server ignored Range and restarted the full 200, but echoes the SAME
+      // strong etag → provably the same representation, so the restart is
+      // accepted. Forward a few bytes then die, forcing a second resume that
+      // must continue from the restart offset.
+      res.writeHead(200, { 'content-length': '10', etag: '"v1"' })
+      res.write('hello')
       setTimeout(() => res.destroy(), 50)
     } else {
-      // No usable etag is held any more — the stale "v1" validator from the
-      // first resume must NOT be replayed on the wire.
-      t.notOk('if-match' in req.headers, 'stale if-match is not carried into the second resume')
-      t.equal(req.headers.range, 'bytes=0-9', 'second resume still requests the full range')
-      res.writeHead(200, { 'content-length': '10' })
-      res.end('helloworld')
+      t.equal(req.headers['if-match'], '"v1"', 'second resume still validates against "v1"')
+      t.equal(req.headers.range, 'bytes=5-9', 'second resume continues from the restart offset')
+      res.writeHead(206, { 'content-range': 'bytes 5-9/10', 'content-length': '5', etag: '"v1"' })
+      res.end('world')
     }
   })
   t.teardown(server.close.bind(server))
@@ -353,6 +362,6 @@ test('retry: stale if-match from a previous resume is not sent once the etag is 
     retry: () => true,
   })
   const text = await body.text()
-  t.equal(text, 'helloworld', 'body delivered after the second resume')
+  t.equal(text, 'helloworld', 'the accepted restart body is forwarded seamlessly')
   t.equal(attempts, 3, 'initial attempt + two resume attempts')
 })

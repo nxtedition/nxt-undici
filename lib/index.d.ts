@@ -63,11 +63,7 @@ export type { TraceWriter } from '@nxtedition/trace'
 import type { TraceWriter } from '@nxtedition/trace'
 
 export type BodyFactoryResult =
-  | Readable
-  | Uint8Array
-  | string
-  | Iterable<unknown>
-  | AsyncIterable<unknown>
+  Readable | Uint8Array | string | Iterable<unknown> | AsyncIterable<unknown>
 
 /** Called with an options object (not a bare signal); the signal aborts when the
  *  request is destroyed before the factory resolves. May be async. */
@@ -255,6 +251,8 @@ export interface CacheKey {
   origin: string
   method: string
   path: string
+  /** The request's (lowercased) headers. On get(), the store MUST use these
+   *  for Vary variant selection — see CacheStore.get(). */
   headers?: Record<string, string | string[] | null | undefined>
 }
 
@@ -271,7 +269,8 @@ export interface CacheValue {
   cachedAt: number
   /** Optional on set(): omitting it defaults to deleteAt (staleAt === deleteAt). */
   staleAt?: number
-  deleteAt?: number
+  /** Required: SqliteCacheStore.set() throws when it is missing. */
+  deleteAt: number
 }
 
 export interface CacheGetResult {
@@ -287,6 +286,29 @@ export interface CacheGetResult {
   deleteAt: number
 }
 
+/**
+ * User-supplied store contract. Every method is SYNCHRONOUS — a store that
+ * returns Promises (Redis/fs-backed) does not work: the interceptor detects
+ * thenables, logs an error and treats them as misses (get) or ignores them
+ * (set/delete), so an async store silently caches nothing.
+ *
+ * get() obligations the interceptor relies on:
+ * - Vary variant selection: return only an entry whose stored `vary` selector
+ *   map matches `key.headers` — for each selector name, the stored value must
+ *   equal the request's header value, where a `null` stored value means "the
+ *   header was absent when the entry was stored" and must only match an
+ *   absent header. Returning the wrong variant serves one client's response
+ *   to another (the interceptor only guards the extremes: 206 partials are
+ *   never served to non-range requests, and entries past deleteAt are
+ *   treated as misses).
+ * - Retention: never return an entry whose `deleteAt` has passed.
+ * - Recency: when multiple entries match, return the most recently WRITTEN
+ *   (receipt order) — not the largest `cachedAt`, which is backdated by the
+ *   corrected initial age and can move backwards across refreshes.
+ * - Body shape: `body` should be a single contiguous Buffer. (A store that
+ *   round-trips set() values verbatim returns the Buffer[] chunk array set()
+ *   received; the interceptor normalizes that, but only at the top level.)
+ */
 export interface CacheStore {
   get(key: CacheKey): CacheGetResult | undefined
   set(
@@ -294,11 +316,16 @@ export interface CacheStore {
     value: CacheValue & { body: null | Buffer | Buffer[]; start: number; end: number },
   ): void
   /** RFC 9111 §4.4 invalidation — optional; the cache interceptor
-   *  feature-detects it and skips invalidation when absent. */
+   *  feature-detects it and skips invalidation when absent. Must drop EVERY
+   *  entry for the key's origin+path, across methods and vary variants. */
   delete?(key: CacheKey): void
   gc(): void
   clear(): void
   close(): void
+  /** Optional per-store defaults consumed by the interceptor when the
+   *  per-request opts.cache.maxEntrySize/maxEntryTTL are not set. */
+  readonly maxEntrySize?: number
+  readonly maxEntryTTL?: number
 }
 
 /** `upgrade` is omitted: request()'s internal handler has no onUpgrade, so any
@@ -349,7 +376,11 @@ export const interceptors: {
   log: (opts?: LogInterceptorOptions) => Interceptor
   redirect: () => Interceptor
   proxy: () => Interceptor
-  cache: () => Interceptor
+  /** `origins` (undici PR #4739): whitelist of origins the cache engages
+   *  for — strings match the whole origin case-insensitively, RegExps are
+   *  tested against it; any other origin bypasses the cache entirely.
+   *  Omitted = cache every origin. */
+  cache: (opts?: { origins?: (string | RegExp)[] }) => Interceptor
   requestId: () => Interceptor
   dns: () => Interceptor
   lookup: () => Interceptor

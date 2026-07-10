@@ -510,3 +510,60 @@ test('parseHttpDate: case variants and mismatched weekday are accepted; real gar
   t.equal(parseHttpDate('2026-07-04T00:00:00Z'), undefined, 'ISO 8601 still rejected')
   t.end()
 })
+
+test('parseHttpDate: RFC 850 two-digit years use the moving 50-year window', (t) => {
+  const referenceTime = Date.UTC(2026, 10, 6, 8, 49, 37)
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-76 08:49:37 GMT', referenceTime)?.getUTCFullYear(),
+    2076,
+    'exactly 50 years in the future stays in the current century',
+  )
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-76 08:49:38 GMT', referenceTime)?.getUTCFullYear(),
+    1976,
+    'the cutoff compares the complete timestamp, not only the year',
+  )
+  t.equal(
+    parseHttpDate('Sunday, 06-Nov-77 08:49:37 GMT', referenceTime)?.getUTCFullYear(),
+    1977,
+    'more than 50 years in the future maps to the most recent past year',
+  )
+  t.end()
+})
+
+test('freshness helpers use their injected clock for RFC 850 dates', (t) => {
+  // Keep the reference century deliberately distinct from the process clock:
+  // these assertions fail if a freshness helper lets parseHttpDate() fall
+  // back to Date.now() instead of forwarding its deterministic `now`.
+  const referenceTime = Date.UTC(2126, 10, 6, 8, 49, 37)
+  const rfc850Date = 'Sunday, 06-Nov-76 08:49:37 GMT'
+  const resolvedTime = Date.UTC(2176, 10, 6, 8, 49, 37)
+
+  t.strictSame(
+    determineLifetime(200, { expires: rfc850Date }, {}, {}, referenceTime),
+    { lifetime: Math.floor((resolvedTime - referenceTime) / 1000), explicit: true },
+    'Expires is resolved relative to the injected clock',
+  )
+  t.strictSame(
+    determineLifetime(
+      200,
+      { date: rfc850Date, expires: 'Sun, 06 Nov 2176 08:49:37 GMT' },
+      {},
+      {},
+      referenceTime,
+    ),
+    { lifetime: 0, explicit: true },
+    'Date and Expires use the same injected reference time',
+  )
+  t.equal(
+    determineLifetime(200, { 'last-modified': rfc850Date }, {}, { heuristic: true }, referenceTime),
+    null,
+    'a future Last-Modified does not create heuristic freshness',
+  )
+  t.equal(
+    determineAge({ date: rfc850Date }, referenceTime),
+    0,
+    'a future Date does not create apparent age',
+  )
+  t.end()
+})

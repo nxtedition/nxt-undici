@@ -9,7 +9,8 @@
 //   against a stored 200). There is no slicing of wider entries and no
 //   suffix/multi-range parsing — those go to the origin.
 // - A request without Range never sees a stored 206; a stale 206 is never
-//   conditionally revalidated (refetched instead); If-Range bypasses entirely.
+//   conditionally revalidated (refetched instead); If-Range bypasses the read
+//   path but its 200/206 answer is still written back (#74).
 // These tests lock in the safe half of that contract: no wrong-window serves,
 // no 206 to a non-range request, no partial bodies masquerading as complete.
 import { test } from 'tap'
@@ -418,7 +419,41 @@ test('range: stale 206 served under request max-stale', async (t) => {
   t.equal(origin.hits, 1, 'served stale from cache under max-stale')
 })
 
-test('range: If-Range requests bypass the cache in both directions', async (t) => {
+test('range: If-Range requests bypass the read path but store the 206 answer (#74)', async (t) => {
+  t.plan(5)
+  const origin = rangeServer({ etag: '"tag-1"' })
+  const server = await startServer(origin.handler)
+  t.teardown(server.close.bind(server))
+  const dispatch = makeDispatch()
+  const { base } = makeOpts(t, server)
+
+  // Prime a fresh cached 206 window [2,6) — an identical *plain* Range request
+  // would now be served from it (see the exact-window test above), so a second
+  // origin hit here genuinely demonstrates the If-Range read-path bypass rather
+  // than an unrelated cache miss.
+  const primed = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(primed.statusCode, 206)
+  t.equal(origin.hits, 1)
+  await flush()
+
+  // The same Range carrying If-Range is NOT served from that fresh cached 206
+  // (the read path bypasses), so the origin is contacted even though an exact
+  // window match is present and fresh.
+  const ifRange = await rawRequest(dispatch, {
+    ...base,
+    headers: { range: 'bytes=2-5', 'if-range': '"tag-1"' },
+  })
+  t.equal(ifRange.statusCode, 206, 'origin answered the If-Range request')
+  t.equal(origin.hits, 2, 'not served from the fresh cached 206 — bypassed to origin')
+  await flush()
+
+  // ...but that 206 answer IS written back, so a later plain exact-window range
+  // request is served from cache without another origin hit (#74).
+  await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(origin.hits, 2, 'If-Range 206 answer was written back')
+})
+
+test('range: a duplicated (array) If-Range still bypasses the read path', async (t) => {
   t.plan(3)
   const origin = rangeServer({ etag: '"tag-1"' })
   const server = await startServer(origin.handler)
@@ -426,20 +461,27 @@ test('range: If-Range requests bypass the cache in both directions', async (t) =
   const dispatch = makeDispatch()
   const { base } = makeOpts(t, server)
 
-  // Prime a fresh full 200.
-  await rawRequest(dispatch, base)
+  // Prime a fresh cached 206 window [2,6).
+  const first = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(first.statusCode, 206)
   await flush()
 
-  const ifRange = await rawRequest(dispatch, {
+  // A malformed (duplicated) If-Range arrives as an array. It stays on the
+  // read-miss path rather than serving the fresh cached 206: we can't evaluate
+  // the validator, and serving a partial whose validator may differ from the
+  // caller's is the corruption If-Range guards against. So the origin is
+  // contacted even though an exact-window entry is cached and fresh.
+  await rawRequest(dispatch, {
     ...base,
-    headers: { range: 'bytes=2-5', 'if-range': '"tag-1"' },
+    headers: { range: 'bytes=2-5', 'if-range': ['"tag-1"', '"tag-2"'] },
   })
-  t.equal(ifRange.statusCode, 206, 'origin answered the If-Range request')
-  t.equal(origin.hits, 2, 'bypassed the fresh cached 200')
+  t.equal(origin.hits, 2, 'array If-Range did not serve the fresh cached 206')
+  await flush()
 
-  // And the bypassed 206 must not have been stored either.
+  // And the read-miss kept the write path, so a plain range request is served
+  // from the write-back without another origin hit.
   await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
-  t.equal(origin.hits, 3, 'If-Range response was not written back')
+  t.equal(origin.hits, 2, 'the array If-Range answer was written back')
 })
 
 test('range: Vary keeps 206 windows apart per variant', async (t) => {

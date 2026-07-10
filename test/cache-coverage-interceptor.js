@@ -847,8 +847,10 @@ test('cache: makeKey preserves non-default ports and distinct hosts', async (t) 
 // Trace-gated read-path branches
 // ---------------------------------------------------------------------------
 
-test('cache: if-range request bypasses the cache and emits a bypass doc', async (t) => {
+test('cache: if-range request is a read miss but keeps the write path (#74)', async (t) => {
+  let hits = 0
   const server = await startServer((req, res) => {
+    hits++
     res.writeHead(200, { 'cache-control': 'max-age=60' })
     res.end('ok')
   })
@@ -867,11 +869,153 @@ test('cache: if-range request bypasses the cache and emits a bypass doc', async 
   })
 
   t.equal(statusCode, 200)
+  // Read side is a miss (not served from cache), but the CacheHandler is
+  // attached, so the answer is stored for later requests.
   const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
   t.equal(lookups.length, 1)
-  t.equal(lookups[0].result, 'bypass')
+  t.equal(lookups[0].result, 'miss')
   t.equal(lookups[0].reason, 'conditional')
   t.equal(lookups[0].statusCode, null)
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 1)
+  t.equal(stores[0].stored, true, 'the if-range answer is stored')
+
+  // A subsequent plain GET is served from the entry written by the if-range
+  // request — the origin is not contacted again.
+  const second = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  })
+  t.equal(second.statusCode, 200)
+  t.equal(hits, 1, 'the second GET is served from the if-range write-back')
+})
+
+test('cache: if-range request with no-store does not store (#74)', async (t) => {
+  const server = await startServer((req, res) => {
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const { statusCode } = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'if-range': '"abc"', 'cache-control': 'no-store' },
+    cache: { store },
+    trace: writer,
+  })
+
+  t.equal(statusCode, 200)
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+  t.equal(lookups[0].result, 'miss')
+  t.equal(lookups[0].reason, 'conditional')
+  const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+  t.equal(stores.length, 0, 'request no-store forbids storing the if-range answer')
+})
+
+test('cache: if-range + only-if-cached is a 504 when nothing is cached (#74)', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const writer = makeWriter()
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const { statusCode } = await rawRequest(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'if-range': '"abc"', 'cache-control': 'only-if-cached' },
+    cache: { store },
+    trace: writer,
+  })
+
+  // No usable stored entry + only-if-cached: RFC 9111 §5.2.1.7 forbids
+  // contacting the origin, so the interceptor answers a synthetic 504.
+  t.equal(statusCode, 504)
+  t.equal(hits, 0, 'origin not contacted')
+  const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+  t.equal(lookups.length, 1)
+  t.equal(lookups[0].result, 'miss')
+  t.equal(lookups[0].reason, 'only-if-cached')
+})
+
+test('cache: if-range + only-if-cached serves a fresh cached 200 (#74)', async (t) => {
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, { 'cache-control': 'max-age=60' })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+
+  // Prime a fresh full 200.
+  const primed = await rawRequestWithBody(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    cache: { store },
+  })
+  t.equal(primed.statusCode, 200)
+  t.equal(hits, 1)
+
+  // An If-Range request with only-if-cached: the origin is off-limits, but a
+  // stored full representation (200) is a valid answer to If-Range — the caller
+  // uses any non-206 wholesale — so it is served from cache rather than 504ing.
+  const second = await rawRequestWithBody(dispatch, {
+    origin: origin(server),
+    path: '/',
+    method: 'GET',
+    headers: { 'if-range': '"abc"', 'cache-control': 'only-if-cached' },
+    cache: { store },
+  })
+  t.equal(second.statusCode, 200, 'fresh cached 200 served, not a 504')
+  t.equal(second.body, 'ok')
+  t.equal(hits, 1, 'origin not contacted')
+})
+
+test('cache: if-match / if-unmodified-since still bypass entirely', async (t) => {
+  for (const header of ['if-match', 'if-unmodified-since']) {
+    const server = await startServer((req, res) => {
+      res.writeHead(200, { 'cache-control': 'max-age=60' })
+      res.end('ok')
+    })
+    t.teardown(server.close.bind(server))
+
+    const writer = makeWriter()
+    const store = new SqliteCacheStore({ location: ':memory:' })
+    const dispatch = makeDispatch()
+    const { statusCode } = await rawRequest(dispatch, {
+      origin: origin(server),
+      path: '/',
+      method: 'GET',
+      headers: { [header]: header === 'if-match' ? '"abc"' : 'Wed, 21 Oct 2015 07:28:00 GMT' },
+      cache: { store },
+      trace: writer,
+    })
+
+    t.equal(statusCode, 200)
+    const lookups = writer.docs.filter((doc) => doc.op === 'undici:cache')
+    t.equal(lookups.length, 1)
+    t.equal(lookups[0].result, 'bypass', `${header} bypasses the read path`)
+    t.equal(lookups[0].reason, 'conditional')
+    const stores = writer.docs.filter((doc) => doc.op === 'undici:cache-store')
+    t.equal(stores.length, 0, `${header} bypasses the write path (no store doc)`)
+  }
 })
 
 // A store holding a stale 206 range entry. SqliteCacheStore never returns a

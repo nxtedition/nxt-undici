@@ -108,6 +108,36 @@ test('parseCacheControl - malformed arguments follow directive-specific safe beh
     { immutable: true },
     'an empty argument is ignored without dropping immutable',
   )
+  // A quoted argument may contain commas the top-level split cut apart; the
+  // continuation must be consumed, not parsed as a separate directive.
+  t.strictSame(
+    parseCacheControl('immutable="x, public"'),
+    { immutable: true },
+    'comma inside a quoted immutable argument does not leak a phantom public',
+  )
+  t.strictSame(
+    parseCacheControl('immutable="x, public'),
+    { immutable: true },
+    'unterminated quoted immutable argument consumes its tail',
+  )
+  t.strictSame(
+    parseCacheControl('immutable="x, public", max-age=60'),
+    { immutable: true, 'max-age': 60 },
+    'a real directive after the closing quote is still parsed',
+  )
+  // Same class of bug for the sibling valueless directives; the unterminated
+  // form is the one that actually leaks (a closing quote keeps the tail from
+  // matching a directive name on its own).
+  t.strictSame(
+    parseCacheControl('public="x, no-store'),
+    {},
+    'comma inside a quoted public argument does not leak a phantom no-store',
+  )
+  t.strictSame(
+    parseCacheControl('no-store="x, public'),
+    { 'no-store': true },
+    'comma inside a quoted no-store argument does not leak a phantom public',
+  )
   t.end()
 })
 

@@ -185,6 +185,8 @@ export interface LogInterceptorOptions {
 }
 
 export interface PressureInterceptorOptions {
+  /** Trace writer for pressure episode documents; null disables tracing. */
+  trace?: TraceWriter | null
   /** Sampling interval for the internal EWMA loop, in ms (default 200).
    *  Set to 0 to disable the internal timer and drive sampling yourself via
    *  `sample()` from a loop you already run. */

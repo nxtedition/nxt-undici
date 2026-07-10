@@ -17,7 +17,13 @@ export interface BodyReadable extends Readable {
   json(): Promise<unknown>
   arrayBuffer(): Promise<ArrayBuffer>
   blob(): Promise<Blob>
+  bytes(): Promise<Uint8Array>
+  /** Not implemented by @nxtedition/undici's BodyReadable; always rejects. */
+  formData(): Promise<never>
   dump(): Promise<void>
+  readonly bodyUsed: boolean
+  /** The Node.js BodyReadable does not expose a Fetch ReadableStream body. */
+  readonly body?: never
 }
 
 export type URLLike = string | URL | URLObject

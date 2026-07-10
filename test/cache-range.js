@@ -448,6 +448,37 @@ test('range: If-Range requests bypass the read path but store the 206 answer (#7
   t.equal(origin.hits, 2, 'If-Range 206 answer was written back')
 })
 
+test('range: a duplicated (array) If-Range still bypasses the read path', async (t) => {
+  t.plan(3)
+  const origin = rangeServer({ etag: '"tag-1"' })
+  const server = await startServer(origin.handler)
+  t.teardown(server.close.bind(server))
+  const dispatch = makeDispatch()
+  const { base } = makeOpts(t, server)
+
+  // Prime a fresh cached 206 window [2,6).
+  const first = await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(first.statusCode, 206)
+  await flush()
+
+  // A malformed (duplicated) If-Range arrives as an array. It stays on the
+  // read-miss path rather than serving the fresh cached 206: we can't evaluate
+  // the validator, and serving a partial whose validator may differ from the
+  // caller's is the corruption If-Range guards against. So the origin is
+  // contacted even though an exact-window entry is cached and fresh.
+  await rawRequest(dispatch, {
+    ...base,
+    headers: { range: 'bytes=2-5', 'if-range': ['"tag-1"', '"tag-2"'] },
+  })
+  t.equal(origin.hits, 2, 'array If-Range did not serve the fresh cached 206')
+  await flush()
+
+  // And the read-miss kept the write path, so a plain range request is served
+  // from the write-back without another origin hit.
+  await rawRequest(dispatch, { ...base, headers: { range: 'bytes=2-5' } })
+  t.equal(origin.hits, 2, 'the array If-Range answer was written back')
+})
+
 test('range: Vary keeps 206 windows apart per variant', async (t) => {
   t.plan(4)
   let hits = 0

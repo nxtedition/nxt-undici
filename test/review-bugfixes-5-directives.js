@@ -31,7 +31,6 @@ import { parseCacheControl, parseHttpDate } from '../lib/utils.js'
 import {
   determineAge,
   determineLifetime,
-  determineAge,
   computeEntryTimes,
   forbidsRequestDrivenStale,
 } from '../lib/interceptor/cache/freshness.js'

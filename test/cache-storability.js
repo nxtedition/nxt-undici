@@ -789,8 +789,13 @@ test('store: re-caching a key supersedes the old row instead of accumulating', a
   t.equal(store.get(key).body.toString(), 'three', 'newest entry served')
 
   const db = new DatabaseSync(dbPath, { readOnly: true })
+  const table = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'cacheInterceptorV%'`,
+    )
+    .get().name
   const { c } = db
-    .prepare(`SELECT COUNT(*) c FROM cacheInterceptorV13 WHERE url = ?`)
+    .prepare(`SELECT COUNT(*) c FROM ${table} WHERE url = ?`)
     .get('https://example.com/hot')
   db.close()
   t.equal(c, 1, 'older rows for the representation were superseded')

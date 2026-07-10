@@ -106,3 +106,23 @@ test('priority: a queued dispatch keeps the permitted void return contract', (t)
   t.equal(calls, 2, 'the queued dispatch runs after the slot is released')
   t.end()
 })
+
+test('priority: a throwing then getter reaches onError', async (t) => {
+  const failure = new Error('then getter failed')
+  const thenable = Object.create(null, {
+    then: {
+      get() {
+        throw failure
+      },
+    },
+  })
+  const dispatch = interceptors.priority()(() => thenable)
+
+  let result
+  const received = new Promise((resolve) => {
+    result = dispatch(opts, handler({ onError: resolve }))
+  })
+
+  t.equal(result, thenable)
+  t.equal(await received, failure)
+})

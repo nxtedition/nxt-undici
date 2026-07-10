@@ -1295,19 +1295,18 @@ test('cache: 206 response without content-range header is not cached', async (t)
 })
 
 // ---------------------------------------------------------------------------
-// CacheHandler: Vary header that is not a string is not cached
+// CacheHandler: repeated Vary field lines are combined
 // ---------------------------------------------------------------------------
 
-test('cache: response with non-string Vary header is not cached', async (t) => {
-  // Node.js HTTP parser may produce array headers when the same header
-  // appears multiple times. The cache interceptor only handles string Vary.
-  t.plan(1)
+test('cache: repeated Vary field lines are combined into one selector list', async (t) => {
+  // Vary is a list field, so repeated field lines are equivalent to one
+  // comma-joined value (RFC 9110 §§5.2–5.3).
+  t.plan(2)
   let hits = 0
 
-  // Use raw dispatch to inject a non-string vary header in the response.
+  // Use raw dispatch to preserve the array shape emitted for repeated lines.
   const server = await startServer((req, res) => {
     hits++
-    // Two Vary lines → Node.js combines them as an array.
     res.setHeader('cache-control', 's-maxage=60')
     res.setHeader('vary', ['accept', 'accept-encoding'])
     res.end('body')
@@ -1320,13 +1319,19 @@ test('cache: response with non-string Vary header is not cached', async (t) => {
     origin: `http://0.0.0.0:${server.address().port}`,
     path: '/',
     method: 'GET',
-    headers: {},
+    headers: { accept: 'text/plain', 'accept-encoding': 'gzip' },
     cache: { store },
   }
 
   await rawRequest(dispatch, opts)
   await rawRequest(dispatch, opts)
-  t.equal(hits, 2, 'response with array Vary header is never cached')
+  t.equal(hits, 1, 'the combined selector is cached and reused')
+
+  await rawRequest(dispatch, {
+    ...opts,
+    headers: { accept: 'text/plain', 'accept-encoding': 'identity' },
+  })
+  t.equal(hits, 2, 'changing either repeated-line selector produces a miss')
 })
 
 // ---------------------------------------------------------------------------

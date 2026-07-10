@@ -1,11 +1,11 @@
 import { test } from 'tap'
 import responseError from '../lib/interceptor/response-error.js'
 
-function captureError(payload) {
+function captureError(payload, contentType = 'application/json') {
   let error
   const dispatch = responseError()((_opts, handler) => {
     handler.onConnect(() => {})
-    handler.onHeaders(400, { 'content-type': 'application/json' }, () => {})
+    handler.onHeaders(400, { 'content-type': contentType }, () => {})
     handler.onData(Buffer.from(payload))
     handler.onComplete({})
   })
@@ -31,5 +31,12 @@ test('response errors retain valid falsy JSON bodies', (t) => {
     t.equal(Object.hasOwn(error, 'body'), true, `${payload} is attached`)
     t.equal(error.body, expected)
   }
+  t.end()
+})
+
+test('response errors do not attach an uncaptured body', (t) => {
+  const error = captureError('binary data', 'application/octet-stream')
+
+  t.equal(Object.hasOwn(error, 'body'), false)
   t.end()
 })

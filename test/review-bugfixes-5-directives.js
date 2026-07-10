@@ -110,6 +110,24 @@ test('parseCacheControl: empty-valued private= / no-cache= fail restrictive (unq
     { 'no-cache': true },
     'no-cache= is unqualified no-cache',
   )
+  // The quoted-empty variants must not slip through the qualified-field-list
+  // path as a non-restrictive empty list (Copilot review finding on #63).
+  t.strictSame(parseCacheControl('private=""'), { private: true }, 'private="" fails restrictive')
+  t.strictSame(
+    parseCacheControl('no-cache=""'),
+    { 'no-cache': true },
+    'no-cache="" fails restrictive',
+  )
+  t.strictSame(
+    parseCacheControl('private=","'),
+    { private: true },
+    'quoted list of only empty members fails restrictive',
+  )
+  t.strictSame(
+    parseCacheControl('private="set-cookie,"'),
+    { private: ['set-cookie'] },
+    'empty members are dropped, real field names kept',
+  )
   t.end()
 })
 

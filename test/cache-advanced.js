@@ -2188,6 +2188,43 @@ test('cache: multi-line If-None-Match with a matching etag returns 304', async (
   t.equal(hits, 1, 'origin not contacted')
 })
 
+test('cache: multi-line If-None-Match containing a wildcard returns 304', async (t) => {
+  t.plan(2)
+  let hits = 0
+  const server = await startServer((req, res) => {
+    hits++
+    res.writeHead(200, {
+      'cache-control': 's-maxage=60',
+      'content-type': 'text/plain',
+      etag: '"abc123"',
+    })
+    res.end('ok')
+  })
+  t.teardown(server.close.bind(server))
+
+  const store = new SqliteCacheStore({ location: ':memory:' })
+  const dispatch = makeDispatch()
+  const base = {
+    origin: `http://0.0.0.0:${server.address().port}`,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    cache: { store },
+  }
+
+  await rawRequest(dispatch, base)
+
+  // Duplicated wildcard lines collapse to '*, *' (RFC 9110 §5.3); a '*'
+  // anywhere in the list is still a wildcard and must return 304, not fall
+  // through to the full 200.
+  const result = await rawRequestWithBody(dispatch, {
+    ...base,
+    headers: { 'if-none-match': ['*', '*'] },
+  })
+  t.equal(result.statusCode, 304, 'wildcard among multiple lines returns 304')
+  t.equal(hits, 1, 'origin not contacted')
+})
+
 test('cache: If-Modified-Since returns 304 when resource not modified', async (t) => {
   t.plan(2)
   let hits = 0

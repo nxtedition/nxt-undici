@@ -30,6 +30,20 @@ function makeValue(overrides = {}) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
+// process.emitWarning delivers asynchronously; poll bounded rather than
+// assuming delivery lands within a single tick (matches waitFor() in
+// test/sqlite-store-error-contract.js).
+async function waitFor(fn, timeout = 2000) {
+  const deadline = Date.now() + timeout
+  while (!fn()) {
+    if (Date.now() > deadline) {
+      return false
+    }
+    await flush()
+  }
+  return true
+}
+
 function tmpDb(t, prefix) {
   const dbPath = path.join(
     os.tmpdir(),
@@ -45,19 +59,15 @@ function tmpDb(t, prefix) {
   return dbPath
 }
 
-// Collect process warnings for the duration of `fn`, then return them.
+// Run `fn`, collecting any process warnings it emits. The `warnings` array is
+// returned live — emitWarning delivery is async, so callers poll it with
+// waitFor() rather than reading it immediately.
 async function withWarnings(fn) {
   const warnings = []
   const onWarning = (w) => warnings.push(w)
   process.on('warning', onWarning)
-  try {
-    const result = await fn()
-    // emitWarning is delivered asynchronously; let it land.
-    await flush()
-    return { result, warnings }
-  } finally {
-    process.removeListener('warning', onWarning)
-  }
+  const result = await fn()
+  return { result, warnings, dispose: () => process.removeListener('warning', onWarning) }
 }
 
 test('recovers from a file that is not a SQLite database (SQLITE_NOTADB)', async (t) => {
@@ -67,13 +77,16 @@ test('recovers from a file that is not a SQLite database (SQLITE_NOTADB)', async
   // SQLITE_NOTADB (errcode 26).
   fs.writeFileSync(dbPath, Buffer.from('this is definitely not a sqlite database file'))
 
-  const { result: store, warnings } = await withWarnings(
-    async () => new SqliteCacheStore({ location: dbPath }),
-  )
+  const {
+    result: store,
+    warnings,
+    dispose,
+  } = await withWarnings(async () => new SqliteCacheStore({ location: dbPath }))
+  t.teardown(dispose)
   t.teardown(() => store.close())
 
   t.ok(
-    warnings.some((w) => /corrupt database/i.test(String(w?.message ?? w))),
+    await waitFor(() => warnings.some((w) => /corrupt database/i.test(String(w?.message ?? w)))),
     'emitted a corruption warning',
   )
 
@@ -112,9 +125,10 @@ test('recovers from a truncated/corrupt SQLite header', async (t) => {
   fs.writeSync(fd, Buffer.alloc(64, 0xff), 0, 64, 16)
   fs.closeSync(fd)
 
-  const { result: store } = await withWarnings(
+  const { result: store, dispose } = await withWarnings(
     async () => new SqliteCacheStore({ location: dbPath }),
   )
+  t.teardown(dispose)
   t.teardown(() => store.close())
 
   store.set(makeKey({ path: '/a' }), makeValue({ body: Buffer.from('world'), end: 5 }))
@@ -122,6 +136,22 @@ test('recovers from a truncated/corrupt SQLite header', async (t) => {
   const got = store.get(makeKey({ path: '/a' }))
   t.ok(got, 'store works after recovery from corrupt header')
   t.equal(got.body.toString(), 'world')
+  t.end()
+})
+
+test('a non-corruption open error still propagates (not swallowed as recovery)', async (t) => {
+  // A path under a non-existent directory yields SQLITE_CANTOPEN (errcode 14),
+  // not NOTADB/CORRUPT — recovery must not kick in; the error must surface.
+  const bad = path.join(
+    os.tmpdir(),
+    `no-such-dir-${Math.random().toString(36).slice(2)}`,
+    'x.sqlite',
+  )
+  t.throws(
+    () => new SqliteCacheStore({ location: bad }),
+    /unable to open database file/,
+    'construction rethrows a non-corruption open error',
+  )
   t.end()
 })
 

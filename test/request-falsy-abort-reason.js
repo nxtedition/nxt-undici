@@ -1,6 +1,20 @@
 import { test } from 'tap'
 import { RequestHandler } from '../lib/request.js'
 
+async function settleWithin(promise) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('request did not settle after abort')), 500)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 test('RequestHandler honors a pre-aborted signal with a falsy reason', (t) => {
   const controller = new AbortController()
   controller.abort(false)
@@ -36,7 +50,7 @@ test('RequestHandler honors a falsy abort reason received before onConnect', asy
   })
 
   t.equal(reason, 0)
-  t.equal(await rejected, 0, 'the pending request settles with the abort reason')
+  t.equal(await settleWithin(rejected), 0, 'the pending request settles with the abort reason')
 })
 
 test('RequestHandler honors null as an abort reason', async (t) => {
@@ -58,5 +72,5 @@ test('RequestHandler honors null as an abort reason', async (t) => {
   })
 
   t.equal(reason, null)
-  t.equal(await rejected, null, 'the pending request settles with the abort reason')
+  t.equal(await settleWithin(rejected), null, 'the pending request settles with the abort reason')
 })

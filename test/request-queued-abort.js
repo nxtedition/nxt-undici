@@ -38,6 +38,7 @@ test('aborting an Agent-queued request rejects before a connection is available'
       firstResponse = res
       markFirstSeen()
     } else {
+      t.fail('the aborted queued request reached the server')
       res.end('unexpected request')
     }
   })

@@ -2,7 +2,6 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { request, Agent } from '../lib/index.js'
-import { getFastNow } from '../lib/utils.js'
 
 async function startServer(handler) {
   const server = createServer(handler ?? ((req, res) => res.end('hello')))
@@ -32,15 +31,17 @@ function makeWriter() {
   }
 }
 
-async function waitForRefreshWindow(cachedAt, ttl) {
-  const started = Date.now()
-  const halfTTL = ttl / 2
-
-  // DNS historically used the coarse getFastNow() clock, while newer code
-  // uses Date.now(). Wait until both clocks are past half-life so this remains
-  // deterministic on either implementation, while the entry is still fresh.
-  while (Date.now() - started <= halfTTL || getFastNow() - cachedAt <= halfTTL) {
-    await new Promise((resolve) => setTimeout(resolve, 10))
+function useFakeNow(t) {
+  const originalNow = Date.now
+  let now = originalNow()
+  Date.now = () => now
+  t.teardown(() => {
+    Date.now = originalNow
+  })
+  return {
+    advance(ms) {
+      now += ms
+    },
   }
 }
 
@@ -163,7 +164,8 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
   const lookup = (hostname, opts, cb) => cb(null, [{ address: '127.0.0.1' }])
   const writer = makeWriter()
   const dispatcher = makeDispatcher(t)
-  const ttl = 1999
+  const clock = useFakeNow(t)
+  const ttl = 1000
 
   // Populate and refresh the exact same policy. Different policies now own
   // independent cache entries and must not be used as a refresh shortcut.
@@ -174,8 +176,7 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
   })
   await first.body.dump()
 
-  const cachedAt = getFastNow()
-  await waitForRefreshWindow(cachedAt, ttl)
+  clock.advance(600)
 
   const second = await request(`http://localhost:${port}`, {
     trace: writer,
@@ -186,8 +187,8 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
 
   // The side-observer settles on a microtask; poll briefly, bounded.
   let refresh = null
-  const deadline = Date.now() + 1000
-  while (refresh == null && Date.now() < deadline) {
+  const deadline = performance.now() + 1000
+  while (refresh == null && performance.now() < deadline) {
     refresh = writer.docs.find((d) => d.op === 'undici:dns' && d.source === 'refresh')
     if (refresh == null) {
       await new Promise((resolve) => setImmediate(resolve))
@@ -216,7 +217,8 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
 
   const writer = makeWriter()
   const dispatcher = makeDispatcher(t)
-  const ttl = 1999
+  const clock = useFakeNow(t)
+  const ttl = 1000
 
   // Hold the same-policy refresh open so both requests provably join one
   // in-flight lookup.
@@ -238,8 +240,7 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
   })
   await first.body.dump()
 
-  const cachedAt = getFastNow()
-  await waitForRefreshWindow(cachedAt, ttl)
+  clock.advance(600)
 
   const pa = request(`http://localhost:${port}`, {
     trace: writer,
@@ -251,8 +252,8 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
     dns: { ttl, lookup },
     dispatcher,
   })
-  const releaseDeadline = Date.now() + 1000
-  while (release == null && Date.now() < releaseDeadline) {
+  const releaseDeadline = performance.now() + 1000
+  while (release == null && performance.now() < releaseDeadline) {
     await new Promise((resolve) => setImmediate(resolve))
   }
   t.type(release, 'function', 'refresh lookup started')
@@ -266,9 +267,9 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
   t.equal(lookups, 2, 'both follow-ups shared one refresh lookup')
 
   // The side-observer settles on a microtask; poll briefly, bounded.
-  const deadline = Date.now() + 1000
+  const deadline = performance.now() + 1000
   let refreshes = []
-  while (refreshes.length === 0 && Date.now() < deadline) {
+  while (refreshes.length === 0 && performance.now() < deadline) {
     refreshes = writer.docs.filter((d) => d.op === 'undici:dns' && d.source === 'refresh')
     if (refreshes.length === 0) {
       await new Promise((resolve) => setImmediate(resolve))

@@ -1,0 +1,43 @@
+import { getEventListeners } from 'node:events'
+import { test } from 'tap'
+import { RequestHandler, request } from '../lib/request.js'
+
+test('AbortSignal reaches transport past stopImmediatePropagation', async (t) => {
+  const controller = new AbortController()
+  const reason = new Error('user abort')
+  let transportReason
+
+  controller.signal.addEventListener('abort', (event) => event.stopImmediatePropagation())
+
+  const result = request(
+    (_opts, handler) => {
+      handler.onConnect((abortReason) => {
+        transportReason = abortReason
+        handler.onError(abortReason)
+      })
+    },
+    'http://example.test',
+    { method: 'GET', signal: controller.signal },
+  )
+
+  controller.abort(reason)
+
+  await t.rejects(result, reason)
+  t.equal(transportReason, reason, 'transport receives the original abort reason')
+})
+
+test('AbortSignal listener disposable is cleaned up on request error', (t) => {
+  const controller = new AbortController()
+  const reason = new Error('dispatch failed')
+  const handler = new RequestHandler(
+    { method: 'GET', body: null, signal: controller.signal },
+    (result) => void result.catch(() => {}),
+  )
+
+  t.equal(getEventListeners(controller.signal, 'abort').length, 1, 'listener is installed')
+
+  handler.onError(reason)
+
+  t.equal(getEventListeners(controller.signal, 'abort').length, 0, 'listener is disposed')
+  t.end()
+})

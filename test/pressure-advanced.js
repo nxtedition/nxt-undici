@@ -396,7 +396,7 @@ test('pressure: degraded releases once responses recover', async (t) => {
   p.close()
 })
 
-test('pressure: a reconnect clears stale status so a later transport failure still counts', async (t) => {
+test('pressure: a reconnect clears stale status before a later completion', async (t) => {
   const p = makeInterceptor()
   const { dispatch, captured } = capturingDispatch()
   const wrapped = p(dispatch)
@@ -405,16 +405,16 @@ test('pressure: a reconnect clears stale status so a later transport failure sti
   wrapped({ origin: ORIGIN, path: '/' }, noopHandler)
   const h = captured[0]
   h.onConnect(() => {})
-  h.onHeaders(200, {}, () => {}) // attempt 1 captured a (non-error) success status
+  h.onHeaders(503, {}, () => {}) // attempt 1 captured an overload status
   h.onConnect(() => {}) // retry -> fresh attempt; captured status must reset
-  h.onError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+  h.onComplete()
 
-  // Without the per-connect reset, the stale 200 would mask the transport
-  // failure (200 -> not an error) and errored would be 0.
+  // Without the per-connect reset, the stale 503 would classify the later
+  // completion as an overload error even though the fresh attempt saw no 5xx.
   t.match(
     p.stats(ORIGIN),
-    { completed: 1, errored: 1 },
-    'transport failure counted, not masked by the prior attempt status',
+    { completed: 1, errored: 0 },
+    'completion is not classified by the prior attempt status',
   )
 
   p.close()

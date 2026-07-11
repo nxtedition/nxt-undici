@@ -419,7 +419,7 @@ test('cache: caller preconditions are ignored for a fresh cached redirect', asyn
 })
 
 // ---------------------------------------------------------------------------
-// get/set key asymmetry: the set path normalized the key via makeCacheKey
+// get/set key asymmetry: the set path normalized the key via makeKey
 // (origin.toString()) while the get path used raw opts, so a URL-object origin
 // could never produce a cache hit.
 // ---------------------------------------------------------------------------

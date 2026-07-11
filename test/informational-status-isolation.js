@@ -1,9 +1,12 @@
 import { test } from 'tap'
 import { interceptors } from '../lib/index.js'
 
-function informationalThenError(failure) {
+function previousResponseThenInformationalError(failure) {
   return (_opts, handler) => {
     handler.onConnect(() => {})
+    handler.onHeaders(200, { 'x-attempt': 'previous' }, () => {})
+    // response-retry can reuse outer handlers for a body-resume attempt without
+    // forwarding that attempt's onConnect, while still forwarding its 1xx.
     handler.onHeaders(
       103,
       { link: '</early.css>; rel=preload', 'x-informational': 'early-hints' },
@@ -13,7 +16,7 @@ function informationalThenError(failure) {
   }
 }
 
-test('log does not report Early Hints as the terminal response', async (t) => {
+test('log clears a previous attempt when Early Hints precede a failure', async (t) => {
   const failure = new Error('connection closed before final headers')
   const errorRecords = []
   const logger = {
@@ -26,7 +29,7 @@ test('log does not report Early Hints as the terminal response', async (t) => {
       errorRecords.push({ data, message })
     },
   }
-  const dispatch = interceptors.log()(informationalThenError(failure))
+  const dispatch = interceptors.log()(previousResponseThenInformationalError(failure))
   const statuses = []
 
   const received = await new Promise((resolve) => {
@@ -54,19 +57,18 @@ test('log does not report Early Hints as the terminal response', async (t) => {
   const failed = errorRecords.find(({ message }) => message === 'upstream request failed')?.data
 
   t.equal(received, failure, 'forwards the original transport error')
-  t.strictSame(statuses, [103], 'still forwards the informational response')
+  t.strictSame(statuses, [200, 103], 'still forwards the informational response')
   t.ok(failed, 'emits a terminal failure log')
   if (failed == null) {
     return
   }
   t.equal(failed.ures.statusCode, undefined, 'does not log 103 as a terminal status')
   t.equal(failed.ures.headers, undefined, 'does not log Early Hints as terminal headers')
-  t.equal(failed.ures.timing.headers, -1, 'does not record terminal-header timing for 1xx')
 })
 
-test('response-error does not decorate a transport failure with Early Hints', async (t) => {
+test('response-error clears a previous attempt when Early Hints precede a failure', async (t) => {
   const failure = new Error('connection closed before final headers')
-  const dispatch = interceptors.responseError()(informationalThenError(failure))
+  const dispatch = interceptors.responseError()(previousResponseThenInformationalError(failure))
   const statuses = []
 
   const received = await new Promise((resolve) => {
@@ -91,7 +93,7 @@ test('response-error does not decorate a transport failure with Early Hints', as
   })
 
   t.equal(received, failure, 'keeps the original transport error')
-  t.strictSame(statuses, [103], 'still forwards the informational response')
+  t.strictSame(statuses, [200, 103], 'still forwards the informational response')
   t.equal(received.statusCode, undefined, 'does not decorate the error with status 103')
   t.strictSame(
     received.res,

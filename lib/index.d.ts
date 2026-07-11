@@ -28,8 +28,14 @@ export interface BodyReadable extends Readable {
 }
 
 export type URLLike = string | URL | URLObject
+export type HeaderPair = readonly [
+  Buffer | string,
+  Buffer | string | readonly (Buffer | string | null | undefined)[] | null | undefined,
+]
 export type HeaderInput =
-  Record<string, string | string[] | null | undefined> | (Buffer | string | (Buffer | string)[])[]
+  | Record<string, string | string[] | null | undefined>
+  | (Buffer | string | (Buffer | string)[])[]
+  | readonly HeaderPair[]
 export type OriginLike = URLLike | readonly URLLike[]
 export type RequestSignal = AbortSignal | EventEmitter
 

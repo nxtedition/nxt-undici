@@ -76,11 +76,12 @@ test('buffered error replay stops at onData(false) and resumes at the next chunk
   const firstData = Promise.withResolvers()
   const completed = Promise.withResolvers()
   const chunks = []
+  const abortReasons = []
   let resumeResponse
   let didComplete = false
 
   const dispatch = responseRetry()((requestOpts, handler) => {
-    handler.onConnect(() => {})
+    handler.onConnect((reason) => abortReasons.push(reason))
     handler.onHeaders(404, { 'content-length': '2' }, () => {})
     handler.onData(Buffer.from('a'))
     handler.onData(Buffer.from('b'))
@@ -119,6 +120,56 @@ test('buffered error replay stops at onData(false) and resumes at the next chunk
   resumeResponse()
   t.strictSame(await completed.promise, { trailer: 'value' })
   t.strictSame(chunks, ['a', 'b'])
+  t.strictSame(abortReasons, [], 'completed replay does not abort the finished transport')
+})
+
+test('completed buffered retry veto has one terminal action', async (t) => {
+  const completed = Promise.withResolvers()
+  const abortReasons = []
+  const events = []
+  let retryCalls = 0
+
+  const dispatch = responseRetry()((requestOpts, handler) => {
+    handler.onConnect((reason) => abortReasons.push(reason))
+    handler.onHeaders(503, { 'content-length': '11' }, () => {})
+    handler.onData(Buffer.from('unavailable'))
+    handler.onComplete({ final: true })
+  })
+
+  dispatch(
+    {
+      ...opts,
+      retry() {
+        retryCalls++
+        return false
+      },
+    },
+    {
+      onConnect() {},
+      onHeaders(statusCode) {
+        events.push(['headers', statusCode])
+        return true
+      },
+      onData(chunk) {
+        events.push(['data', chunk.toString()])
+        return true
+      },
+      onComplete(trailers) {
+        events.push(['complete', trailers])
+        completed.resolve()
+      },
+      onError: completed.reject,
+    },
+  )
+
+  await completed.promise
+  t.equal(retryCalls, 1)
+  t.strictSame(events, [
+    ['headers', 503],
+    ['data', 'unavailable'],
+    ['complete', { final: true }],
+  ])
+  t.strictSame(abortReasons, [], 'transport is not aborted after downstream completion')
 })
 
 test('buffer-cap transition drains replay before resuming the live transport', async (t) => {

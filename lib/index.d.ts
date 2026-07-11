@@ -180,9 +180,12 @@ export interface VerifyOptions {
 }
 
 export interface DnsOptions {
+  /** How long (ms) successful lookup records remain cached (default 2000).
+   *  Must be finite and non-negative; 0 disables positive caching. */
   ttl?: number
   /** How long (ms) a failed lookup is negative-cached; requests inside this
-   *  window fail fast without hitting the resolver again (default 1000). */
+   *  window fail fast without hitting the resolver again (default 1000).
+   *  Must be finite and non-negative; 0 disables negative caching. */
   negativeTTL?: number
   balance?: 'hash'
   /** Custom resolver, `dns.lookup`-compatible (called with `{ all: true }`). */

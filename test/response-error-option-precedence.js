@@ -57,3 +57,10 @@ test('response-error uses throwOnError only when error is absent', (t) => {
   t.equal(dispatchErrorResponse({}), 'error', 'response errors remain enabled by default')
   t.end()
 })
+
+test('response-error is disabled only by an explicit false', (t) => {
+  for (const error of [0, '', NaN]) {
+    t.equal(dispatchErrorResponse({ error }), 'error', `${String(error)} does not disable errors`)
+  }
+  t.end()
+})

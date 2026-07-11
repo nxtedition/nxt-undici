@@ -2,7 +2,8 @@ import { test } from 'tap'
 import crypto from 'node:crypto'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { request, Agent, interceptors } from '../lib/index.js'
+import { request, Agent, compose, interceptors } from '../lib/index.js'
+import { request as rawRequest } from '../lib/request.js'
 
 async function startServer(handler) {
   const server = createServer(handler)
@@ -183,4 +184,67 @@ test('trace-verify: overrun emits undici:verify doc with kind overrun', (t) => {
   })
 
   t.end()
+})
+
+test('trace-verify: retry callback mutations do not break request correlation', async (t) => {
+  const writer = makeWriter()
+  let attempts = 0
+
+  const dispatch = compose(
+    (_opts, handler) => {
+      handler.onConnect(() => {})
+
+      if (attempts++ === 0) {
+        handler.onError(Object.assign(new Error('retry me'), { code: 'ECONNRESET' }))
+        return
+      }
+
+      handler.onHeaders(206, { 'content-range': 'bytes 0-9/10', 'content-length': '5' }, () => {})
+      handler.onData(Buffer.from('short'))
+      handler.onComplete({})
+    },
+    interceptors.responseRetry(),
+    interceptors.responseVerify(),
+    interceptors.log(),
+  )
+
+  const { body } = await rawRequest(dispatch, {
+    id: 'req-original',
+    method: 'GET',
+    origin: 'http://original.test',
+    path: '/resource',
+    verify: { size: true },
+    trace: writer,
+    retry(_err, _count, opts) {
+      opts.id = 'req-mutated'
+      opts.method = 'PATCH'
+      opts.origin = 'http://mutated.test'
+      opts.path = '/different'
+      return true
+    },
+  })
+
+  await t.rejects(body.text(), /size mismatch/)
+  t.equal(attempts, 2)
+
+  const requestDocs = writer.docs.filter((doc) => doc.op === 'undici:request')
+  const start = requestDocs.find((doc) => doc.phase === 'start')
+  const end = requestDocs.find((doc) => doc.phase === 'end')
+  const verify = writer.docs.find((doc) => doc.op === 'undici:verify')
+
+  t.equal(requestDocs.length, 2, 'the logical request emits one trace pair')
+  t.ok(start, 'the request start trace exists')
+  t.ok(end, 'the request end trace exists')
+  t.ok(verify, 'the verification failure trace exists')
+  if (!start || !end || !verify) {
+    return
+  }
+
+  t.match(end, { id: start.id, method: start.method, url: start.url })
+  t.match(verify, {
+    id: start.id,
+    method: start.method,
+    url: start.url,
+    kind: 'size',
+  })
 })

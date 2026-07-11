@@ -347,10 +347,7 @@ export function compose(
   ...interceptors: (Interceptor | null | undefined)[]
 ): DispatchFn
 
-export function parseHeaders(
-  headers?: HeaderInput | null,
-  obj?: Record<string, string | string[]>,
-): Record<string, string | string[]>
+export function parseHeaders(headers?: HeaderInput | null): Record<string, string | string[]>
 
 export const interceptors: {
   query: () => Interceptor

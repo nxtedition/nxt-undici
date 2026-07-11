@@ -277,7 +277,12 @@ test('RequestHandler: EventEmitter signal does not crash and propagates abort', 
 
   let handler
   t.doesNotThrow(() => {
-    handler = new RequestHandler({ method: 'GET', body: null, signal }, () => {})
+    handler = new RequestHandler({ method: 'GET', body: null, signal }, (value) => {
+      // RequestHandler settles aborts through the promise resolver. This unit
+      // callback is not a native resolver, so explicitly observe the adopted
+      // rejection instead of leaving it unhandled.
+      void Promise.resolve(value).catch(() => {})
+    })
   }, 'constructing with an EventEmitter signal does not throw')
 
   let abortReason

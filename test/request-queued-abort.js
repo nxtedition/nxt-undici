@@ -1,13 +1,15 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test } from 'tap'
 import { Agent, request } from '../lib/index.js'
 
 test('a pre-aborted request rejects without reaching the dispatcher', async (t) => {
   const controller = new AbortController()
-  const reason = new Error('already aborted')
+  const reason = { message: 'already aborted' }
   controller.abort(reason)
+  const requestBody = new PassThrough()
 
   let dispatches = 0
   const dispatcher = {
@@ -18,11 +20,47 @@ test('a pre-aborted request rejects without reaching the dispatcher', async (t) 
 
   const result = await request('http://example.test', {
     dispatcher,
+    body: requestBody,
     signal: controller.signal,
   }).catch((err) => err)
 
   t.equal(result, reason)
   t.equal(dispatches, 0)
+  if (!requestBody.closed) {
+    await once(requestBody, 'close')
+  }
+  t.equal(requestBody.destroyed, true)
+  t.equal(requestBody.errored?.cause, reason, 'stream cleanup uses an Error carrying the reason')
+})
+
+test('a non-Error abort before onConnect safely cleans up the request body', async (t) => {
+  const controller = new AbortController()
+  const reason = 'abort as a string'
+  const requestBody = new PassThrough()
+  let dispatches = 0
+  const dispatcher = {
+    dispatch() {
+      dispatches++
+    },
+  }
+
+  const pending = request('http://example.test', {
+    dispatcher,
+    body: requestBody,
+    dns: false,
+    lookup: false,
+    signal: controller.signal,
+  })
+  t.equal(dispatches, 1, 'the dispatcher queued the request without connecting it')
+  controller.abort(reason)
+
+  const result = await pending.catch((err) => err)
+  t.equal(result, reason, 'the public rejection retains the exact caller reason')
+  if (!requestBody.closed) {
+    await once(requestBody, 'close')
+  }
+  t.equal(requestBody.destroyed, true)
+  t.equal(requestBody.errored?.cause, reason, 'stream cleanup receives a native Error')
 })
 
 test('aborting an Agent-queued request rejects before a connection is available', async (t) => {

@@ -40,3 +40,37 @@ test('pressure: transport errors remain errors after response headers', (t) => {
     'an explicitly decorated 503 remains an overload response error',
   )
 })
+
+test('pressure: invalid error status values settle without coercion', (t) => {
+  const statusCodes = [
+    Symbol('status'),
+    503n,
+    NaN,
+    Infinity,
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error('statusCode must not be coerced')
+      },
+    },
+  ]
+  t.plan(statusCodes.length * 2)
+
+  const captured = []
+  const pressure = interceptors.pressure({ sampleInterval: 0 })
+  t.teardown(() => pressure.close())
+  const dispatch = pressure((_opts, handler) => captured.push(handler))
+
+  for (const [index, statusCode] of statusCodes.entries()) {
+    dispatch({ origin: ORIGIN, path: '/' }, handler)
+    const current = captured.at(-1)
+    current.onConnect(() => {})
+    const err = Object.assign(new Error('invalid status'), { statusCode })
+
+    t.doesNotThrow(() => current.onError(err), `value ${index + 1} is not coerced`)
+    t.match(
+      pressure.stats(ORIGIN),
+      { completed: index + 1, errored: index + 1 },
+      'invalid decorated status is classified as a transport failure',
+    )
+  }
+})

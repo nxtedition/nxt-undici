@@ -123,3 +123,78 @@ test('lookup: successful settlement removes its abort listener', async (t) => {
   t.equal(completed, 1)
   t.equal(getEventListeners(controller.signal, 'abort').length, 0)
 })
+
+test('lookup: raw dispatch ignores an unpaired EventTarget signal', async (t) => {
+  let subscriptions = 0
+  let dispatches = 0
+
+  const dispatch = interceptors.lookup()((_opts, handler) => {
+    dispatches++
+    handler.onComplete([])
+  })
+
+  await dispatch(
+    {
+      origin: 'http://service.test',
+      signal: {
+        aborted: false,
+        addEventListener() {
+          subscriptions++
+        },
+      },
+      lookup(origin, _opts, callback) {
+        callback(null, origin)
+      },
+    },
+    {
+      onComplete() {},
+      onError(err) {
+        t.fail(`unexpected lookup error: ${err}`)
+      },
+    },
+  )
+
+  t.equal(subscriptions, 0, 'an unremovable listener is never installed')
+  t.equal(dispatches, 1, 'lookup still dispatches')
+})
+
+test('lookup: on/off-only signal is unsubscribed after settlement', async (t) => {
+  let listener
+  let removals = 0
+
+  const signal = {
+    aborted: false,
+    on(event, value) {
+      t.equal(event, 'abort')
+      listener = value
+    },
+    off(event, value) {
+      t.equal(event, 'abort')
+      t.equal(value, listener)
+      removals++
+    },
+  }
+
+  const dispatch = interceptors.lookup()((_opts, handler) => {
+    handler.onComplete([])
+  })
+
+  await dispatch(
+    {
+      origin: 'http://service.test',
+      signal,
+      lookup(origin, _opts, callback) {
+        callback(null, origin)
+      },
+    },
+    {
+      onComplete() {},
+      onError(err) {
+        t.fail(`unexpected lookup error: ${err}`)
+      },
+    },
+  )
+
+  t.type(listener, 'function')
+  t.equal(removals, 1)
+})

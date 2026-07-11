@@ -77,6 +77,58 @@ test('trace: start/end pair with correct shape', async (t) => {
   t.equal(end.err, null)
 })
 
+test('trace: start/end metadata stays paired when dispatch options mutate', async (t) => {
+  const { interceptors } = await import('../lib/index.js')
+
+  const writer = makeWriter()
+  const opts = {
+    id: 'req-original',
+    method: 'GET',
+    origin: 'http://original.test',
+    path: '/before',
+    trace: writer,
+  }
+  const dispatch = interceptors.log()((innerOpts, handler) => {
+    handler.onConnect(() => {})
+
+    innerOpts.id = 'req-mutated'
+    innerOpts.method = 'POST'
+    innerOpts.origin = 'http://mutated.test'
+    innerOpts.path = '/after'
+
+    handler.onHeaders(204, {}, () => {})
+    handler.onComplete({})
+  })
+
+  dispatch(opts, {
+    onConnect() {},
+    onHeaders() {
+      return true
+    },
+    onComplete() {},
+  })
+
+  t.equal(opts.id, 'req-mutated', 'the inner dispatcher mutated the live options')
+  t.strictSame(
+    writer.docs.map(({ phase, id, method, url }) => ({ phase, id, method, url })),
+    [
+      {
+        phase: 'start',
+        id: 'req-original',
+        method: 'GET',
+        url: 'http://original.test/before',
+      },
+      {
+        phase: 'end',
+        id: 'req-original',
+        method: 'GET',
+        url: 'http://original.test/before',
+      },
+    ],
+    'the pair keeps one correlation identity',
+  )
+})
+
 // ---------------------------------------------------------------------------
 // url is bounded to 256 characters
 // ---------------------------------------------------------------------------

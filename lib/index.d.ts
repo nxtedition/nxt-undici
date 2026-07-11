@@ -134,6 +134,8 @@ export interface DispatchOptions {
 }
 
 export interface RetryOptions {
+  /** Maximum retries after the initial attempt (default 8). Must be a
+   *  non-negative safe integer; invalid runtime values disable retries. */
   count?: number
   /** Cap on the exponential backoff between attempts, in milliseconds
    *  (default 60_000; clamped to the ~2^31−1 ms timer max). The first retry is
@@ -186,9 +188,12 @@ export interface VerifyOptions {
 }
 
 export interface DnsOptions {
+  /** How long (ms) successful lookup records remain cached (default 2000).
+   *  Must be finite and non-negative; 0 disables positive caching. */
   ttl?: number
   /** How long (ms) a failed lookup is negative-cached; requests inside this
-   *  window fail fast without hitting the resolver again (default 1000). */
+   *  window fail fast without hitting the resolver again (default 1000).
+   *  Must be finite and non-negative; 0 disables negative caching. */
   negativeTTL?: number
   balance?: 'hash'
   /** Custom resolver, `dns.lookup`-compatible (called with `{ all: true }`). */

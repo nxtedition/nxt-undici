@@ -82,7 +82,7 @@ test('proxy: OWS-only Via array parts do not create empty list members', (t) => 
 test('proxy: OWS-only scalar Forwarded is treated as absent', (t) => {
   const headers = requestHeaders({ forwarded: '\t \t' }, {})
 
-  t.notOk(headers.forwarded)
+  t.notOk(Object.hasOwn(headers, 'forwarded'))
   t.end()
 })
 

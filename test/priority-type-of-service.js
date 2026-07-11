@@ -51,3 +51,22 @@ test('unknown priority names cannot read inherited type-of-service values', asyn
     t.equal(opts.typeOfService, 0, `${priority} falls back to best effort`)
   }
 })
+
+test('priority coercion failures fall back to normal service', async (t) => {
+  const symbol = await capture({ priority: Symbol('priority') })
+  t.equal(symbol.priority, 0)
+  t.equal(symbol.typeOfService, 0)
+
+  const hostile = await capture({
+    priority: {
+      toString() {
+        return 'hostile'
+      },
+      valueOf() {
+        throw new Error('cannot coerce priority')
+      },
+    },
+  })
+  t.equal(hostile.priority, 0)
+  t.equal(hostile.typeOfService, 0)
+})

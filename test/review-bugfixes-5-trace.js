@@ -32,6 +32,14 @@ test('traceUrl: trailing-slash string origins converge with URL-instance origins
   t.end()
 })
 
+test('traceUrl: unparseable credential-bearing origins are redacted', (t) => {
+  t.equal(
+    traceUrl({ origin: 'http://secret:password@not a valid host', path: '/private' }),
+    '[redacted]/private',
+  )
+  t.end()
+})
+
 async function startServer(handler) {
   const server = createServer(handler)
   server.listen(0)

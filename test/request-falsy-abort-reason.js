@@ -17,10 +17,15 @@ test('RequestHandler honors a pre-aborted signal with a falsy reason', (t) => {
   t.end()
 })
 
-test('RequestHandler honors a falsy abort reason received before onConnect', (t) => {
+test('RequestHandler honors a falsy abort reason received before onConnect', async (t) => {
   const controller = new AbortController()
-  const handler = new RequestHandler({ method: 'GET', body: null, signal: controller.signal }, () =>
-    t.fail('an aborted request must not resolve'),
+  let settle
+  const rejected = new Promise((resolve) => {
+    settle = resolve
+  })
+  const handler = new RequestHandler(
+    { method: 'GET', body: null, signal: controller.signal },
+    (value) => Promise.resolve(value).catch(settle),
   )
 
   controller.abort(0)
@@ -31,13 +36,18 @@ test('RequestHandler honors a falsy abort reason received before onConnect', (t)
   })
 
   t.equal(reason, 0)
-  t.end()
+  t.equal(await rejected, 0, 'the pending request settles with the abort reason')
 })
 
-test('RequestHandler honors null as an abort reason', (t) => {
+test('RequestHandler honors null as an abort reason', async (t) => {
   const controller = new AbortController()
-  const handler = new RequestHandler({ method: 'GET', body: null, signal: controller.signal }, () =>
-    t.fail('an aborted request must not resolve'),
+  let settle
+  const rejected = new Promise((resolve) => {
+    settle = resolve
+  })
+  const handler = new RequestHandler(
+    { method: 'GET', body: null, signal: controller.signal },
+    (value) => Promise.resolve(value).catch(settle),
   )
 
   controller.abort(null)
@@ -48,5 +58,5 @@ test('RequestHandler honors null as an abort reason', (t) => {
   })
 
   t.equal(reason, null)
-  t.end()
+  t.equal(await rejected, null, 'the pending request settles with the abort reason')
 })

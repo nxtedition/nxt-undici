@@ -13,11 +13,11 @@ function makeWriter() {
   }
 }
 
-function request(dispatch, dns, { abort = false, reason } = {}) {
+function request(dispatch, dns, { abort = false, reason, trace } = {}) {
   return new Promise((resolve) => {
     let statusCode
     dispatch(
-      { origin: ORIGIN, path: '/', method: 'GET', headers: {}, dns },
+      { origin: ORIGIN, path: '/', method: 'GET', headers: {}, dns, trace },
       {
         onConnect(abortRequest) {
           if (abort) {
@@ -65,7 +65,7 @@ async function verifyReason(t, reason, label) {
     }
   })
 
-  const aborted = await request(dispatch, { ...dns, trace: writer }, { abort: true, reason })
+  const aborted = await request(dispatch, dns, { abort: true, reason, trace: writer })
   t.equal(aborted.type, 'error', `${label}: abort reaches the terminal handler`)
   t.equal(aborted.value, reason, `${label}: reason identity is preserved`)
 

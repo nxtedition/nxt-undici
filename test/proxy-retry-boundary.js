@@ -4,7 +4,7 @@ import { request } from '../lib/index.js'
 test('proxy sanitizes headers added by a retry callback on every attempt', async (t) => {
   const requests = []
   const dispatcher = (opts, handler) => {
-    requests.push(opts.headers)
+    requests.push({ ...opts.headers })
     handler.onConnect(() => {})
     if (requests.length === 1) {
       handler.onHeaders(503, { 'content-length': '5' }, () => {})

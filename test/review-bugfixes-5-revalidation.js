@@ -21,6 +21,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
 import { parseHttpDate } from '../lib/utils.js'
+import { makeKey } from '../lib/interceptor/cache/store.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
@@ -163,7 +164,7 @@ test('304 freshening appends a missing Date at validation receipt', async (t) =>
   )
 
   await settle()
-  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  const entry = store.get(makeKey(opts))
   t.equal(entry.headers.date, response.headers.date, 'the generated 304 Date updated storage')
   t.end()
 })

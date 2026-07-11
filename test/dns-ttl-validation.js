@@ -44,6 +44,8 @@ test('dns: rejects invalid TTL option values before lookup', async (t) => {
   const cases = [
     ['ttl', '1000', 'TypeError', 'must be a number'],
     ['negativeTTL', '1000', 'TypeError', 'must be a number'],
+    ['ttl', null, 'TypeError', 'must be a number'],
+    ['negativeTTL', null, 'TypeError', 'must be a number'],
     ['ttl', NaN, 'RangeError', 'must be a finite number greater than or equal to 0'],
     ['ttl', Infinity, 'RangeError', 'must be a finite number greater than or equal to 0'],
     ['ttl', -1, 'RangeError', 'must be a finite number greater than or equal to 0'],

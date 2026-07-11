@@ -65,19 +65,21 @@ test('a non-Error abort before onConnect safely cleans up the request body', asy
 
 test('aborting an Agent-queued request rejects before a connection is available', async (t) => {
   let firstResponse
-  let requestCount = 0
+  const requestPaths = []
   let markFirstSeen
   const firstSeen = new Promise((resolve) => {
     markFirstSeen = resolve
   })
-  const server = createServer((_req, res) => {
-    requestCount++
-    if (firstResponse == null) {
+  const server = createServer((req, res) => {
+    requestPaths.push(req.url)
+    if (req.url === '/first') {
       firstResponse = res
       markFirstSeen()
-    } else {
+    } else if (req.url === '/aborted') {
       t.fail('the aborted queued request reached the server')
       res.end('unexpected request')
+    } else {
+      res.end('probe')
     }
   })
   server.listen(0, '127.0.0.1')
@@ -92,12 +94,12 @@ test('aborting an Agent-queued request rejects before a connection is available'
   })
 
   const origin = `http://127.0.0.1:${server.address().port}`
-  const first = request(origin, { dispatcher: agent, dns: false, retry: false })
+  const first = request(`${origin}/first`, { dispatcher: agent, dns: false, retry: false })
   await firstSeen
 
   const controller = new AbortController()
   const reason = new Error('abort while queued')
-  const queued = request(origin, {
+  const queued = request(`${origin}/aborted`, {
     dispatcher: agent,
     dns: false,
     retry: false,
@@ -112,6 +114,11 @@ test('aborting an Agent-queued request rejects before a connection is available'
   firstResponse.end('first')
   const { body } = await first
   await body.dump()
-  await delay(20)
-  t.equal(requestCount, 1, 'the aborted queued request is never written to the server')
+
+  // A successful request queued behind the aborted one is a deterministic
+  // drain barrier: once it completes, the Agent has processed every earlier
+  // queue entry, without relying on a short timing window.
+  const probe = await request(`${origin}/probe`, { dispatcher: agent, dns: false, retry: false })
+  await probe.body.dump()
+  t.strictSame(requestPaths, ['/first', '/probe'])
 })

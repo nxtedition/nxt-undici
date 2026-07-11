@@ -1,3 +1,5 @@
+import { once } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { test } from 'tap'
 import { RequestHandler } from '../lib/request.js'
 
@@ -33,13 +35,13 @@ test('RequestHandler honors a pre-aborted signal with a falsy reason', (t) => {
 
 test('RequestHandler honors a falsy abort reason received before onConnect', async (t) => {
   const controller = new AbortController()
+  const body = new PassThrough()
   let settle
   const rejected = new Promise((resolve) => {
     settle = resolve
   })
-  const handler = new RequestHandler(
-    { method: 'GET', body: null, signal: controller.signal },
-    (value) => Promise.resolve(value).catch(settle),
+  const handler = new RequestHandler({ method: 'GET', body, signal: controller.signal }, (value) =>
+    Promise.resolve(value).catch(settle),
   )
 
   controller.abort(0)
@@ -51,6 +53,10 @@ test('RequestHandler honors a falsy abort reason received before onConnect', asy
 
   t.equal(reason, 0)
   t.equal(await settleWithin(rejected), 0, 'the pending request settles with the abort reason')
+  if (!body.closed) {
+    await once(body, 'close')
+  }
+  t.equal(body.errored?.cause, 0, 'stream cleanup wraps a falsy non-Error reason')
 })
 
 test('RequestHandler honors null as an abort reason', async (t) => {

@@ -53,3 +53,11 @@ test('proxy: quoted-pair parentheses keep a Via comma inside its comment', async
 test('proxy: a genuine Via loop is found before a comma-bearing comment', async (t) => {
   await t.rejects(responseWithVia('1.1 edge (note, other proxy)', 'edge'), { statusCode: 508 })
 })
+
+test('proxy: an unterminated Via comment is rejected before appending', async (t) => {
+  await t.rejects(responseWithVia('1.1 upstream (unterminated', 'edge'), { statusCode: 502 })
+})
+
+test('proxy: a dangling quoted-pair in a Via comment is rejected', async (t) => {
+  await t.rejects(responseWithVia('1.1 upstream (dangling\\', 'edge'), { statusCode: 502 })
+})

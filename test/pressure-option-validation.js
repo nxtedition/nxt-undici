@@ -30,6 +30,14 @@ test('pressure: accepts the documented numeric option domains', (t) => {
   t.end()
 })
 
+test('pressure: accepts zero as manual sampling mode', (t) => {
+  const pressure = interceptors.pressure({ sampleInterval: 0 })
+
+  t.type(pressure, 'function')
+  pressure.close()
+  t.end()
+})
+
 test('pressure: rejects non-number numeric options', (t) => {
   t.plan(NUMERIC_OPTIONS.length)
 

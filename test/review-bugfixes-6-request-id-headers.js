@@ -30,3 +30,11 @@ test('request-id: a flat-array parent header is preserved in the chain', (t) => 
   t.notOk('0' in captured.headers, 'does not spread array indexes into the header object')
   t.end()
 })
+
+test('request-id: omitted headers produce a normalized request-id object', (t) => {
+  const captured = captureRequest()
+
+  t.match(captured.id, /^req-/)
+  t.same(captured.headers, { 'request-id': captured.id })
+  t.end()
+})

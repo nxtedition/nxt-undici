@@ -1092,6 +1092,29 @@ test('makeResult leaves optional fields undefined for a minimal row (null body)'
   t.end()
 })
 
+test('makeResult fails closed for an unexpected persisted Authorization marker', async (t) => {
+  const dbPath = tmpDb(t, 'authorization-marker')
+  const key = makeKey({ path: '/authorization-marker' })
+  const store = new SqliteCacheStore({ location: dbPath })
+
+  store.set(key, makeValue({ authorizationRequest: false }))
+  await flush()
+  store.close()
+
+  const db = new DatabaseSync(dbPath)
+  db.prepare('UPDATE cacheInterceptorV14 SET authorizationRequest = ?').run(2)
+  db.close()
+
+  const reopened = new SqliteCacheStore({ location: dbPath })
+  t.teardown(() => reopened.close())
+  t.equal(
+    reopened.get(key).authorizationRequest,
+    true,
+    'unknown non-zero provenance cannot make an authenticated response anonymous',
+  )
+  t.end()
+})
+
 test('set() without staleAt defaults it to deleteAt', async (t) => {
   const store = new SqliteCacheStore()
   t.teardown(() => store.close())

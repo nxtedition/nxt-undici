@@ -5,7 +5,7 @@ const signal = new EventEmitter()
 const requestOptions: RequestOptions = { signal }
 const dispatchOptions: DispatchOptions = { signal }
 const lookup: LookupFn = (_origin, _options, callback) => {
-  callback(null, 'http://resolved.example.test')
+  callback(null, '127.0.0.1')
 }
 lookup('http://service.example.test', { signal }, () => {})
 

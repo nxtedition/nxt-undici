@@ -93,6 +93,21 @@ test('proxy: Connection-nominated Forwarded is dropped without a socket', (t) =>
   t.end()
 })
 
+test('proxy: Connection-nominated Via still participates in loop detection', (t) => {
+  t.throws(
+    () =>
+      requestHeaders(
+        {
+          connection: 'Via',
+          via: '1.1 edge',
+        },
+        { name: 'edge' },
+      ),
+    { statusCode: 508 },
+  )
+  t.end()
+})
+
 test('proxy: Connection-nominated provenance is replaced on responses', (t) => {
   const headers = responseHeaders(
     {

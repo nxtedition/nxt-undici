@@ -51,7 +51,7 @@ test('public declarations compile', (t) => {
       '--noEmit',
       '--strict',
       '--target',
-      'ES2022',
+      'ES2024',
       '--module',
       'NodeNext',
       '--moduleResolution',

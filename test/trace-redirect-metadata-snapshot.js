@@ -103,3 +103,49 @@ test('non-redirect responses do not resolve redirect trace state', (t) => {
   t.equal(traceReads, 0)
   t.end()
 })
+
+test('follow veto does not resolve redirect trace state', (t) => {
+  let traceReads = 0
+  let followCalls = 0
+  let receivedStatus
+  let completed = false
+  const dispatch = interceptors.redirect()((_opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(302, { location: '/next' }, () => {})
+    handler.onComplete({})
+  })
+
+  dispatch(
+    {
+      id: 'req-vetoed',
+      origin: 'http://original.test',
+      path: '/resource',
+      follow() {
+        followCalls++
+        return false
+      },
+      get trace() {
+        traceReads++
+        return null
+      },
+    },
+    {
+      onConnect() {},
+      onHeaders(statusCode) {
+        receivedStatus = statusCode
+      },
+      onComplete() {
+        completed = true
+      },
+      onError(err) {
+        throw err
+      },
+    },
+  )
+
+  t.equal(followCalls, 1)
+  t.equal(receivedStatus, 302)
+  t.equal(completed, true)
+  t.equal(traceReads, 0)
+  t.end()
+})

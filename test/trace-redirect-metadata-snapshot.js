@@ -73,3 +73,33 @@ test('follow callback mutations do not rewrite redirect trace provenance', async
     count: 1,
   })
 })
+
+test('non-redirect responses do not resolve redirect trace state', (t) => {
+  let traceReads = 0
+  const dispatch = interceptors.redirect()((_opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, { 'content-length': '0' }, () => {})
+    handler.onComplete({})
+  })
+
+  dispatch(
+    {
+      follow: true,
+      get trace() {
+        traceReads++
+        return null
+      },
+    },
+    {
+      onConnect() {},
+      onHeaders() {},
+      onComplete() {},
+      onError(err) {
+        throw err
+      },
+    },
+  )
+
+  t.equal(traceReads, 0)
+  t.end()
+})

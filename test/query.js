@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { request } from '../lib/index.js'
@@ -38,6 +37,42 @@ test('empty query object does not add ?', (t) => {
       str += chunk
     }
     t.equal(str, '/test')
+  })
+})
+
+test('empty query arrays do not leave stray separators', (t) => {
+  t.plan(2)
+  const server = createServer((req, res) => {
+    res.end(req.url)
+  })
+
+  t.teardown(server.close.bind(server))
+  server.listen(0, async () => {
+    const { body } = await request(`http://0.0.0.0:${server.address().port}/test`, {
+      query: {
+        first: [],
+        kept: 'value',
+        middle: [],
+        emptyValue: '',
+        last: 'two',
+        trailing: [],
+      },
+    })
+    let str = ''
+    for await (const chunk of body) {
+      str += chunk
+    }
+    t.equal(str, '/test?kept=value&emptyValue=&last=two')
+
+    const { body: emptyBody } = await request(
+      `http://0.0.0.0:${server.address().port}/only-empty`,
+      { query: { first: [], second: [] } },
+    )
+    let emptyStr = ''
+    for await (const chunk of emptyBody) {
+      emptyStr += chunk
+    }
+    t.equal(emptyStr, '/only-empty', 'all-empty arrays do not add a bare question mark')
   })
 })
 

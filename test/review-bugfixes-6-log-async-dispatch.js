@@ -37,5 +37,6 @@ test('log: an asynchronous dispatch rejection finalizes the in-flight handler', 
   t.equal(globalThis[kGlobalArray]?.length ?? 0, before, 'no in-flight registry entry leaks')
   t.equal(onErrorCalls, 0, 'the log layer does not double-deliver the outer error path')
   t.equal(errors.length, 1, 'the rejection receives one terminal failure log')
-  t.equal(errors[0][0].err, failure)
+  t.not(errors[0][0].err, failure, 'the logger receives an isolated error snapshot')
+  t.equal(errors[0][0].err.message, failure.message, 'the snapshot keeps useful diagnostics')
 })

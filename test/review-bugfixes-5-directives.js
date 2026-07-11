@@ -284,6 +284,18 @@ test('authorization permission requires syntactically valid response directives'
     true,
     'valid bare must-revalidate still grants shared caching',
   )
+  for (const sMaxAge of [NaN, Infinity, -1]) {
+    t.equal(
+      allowsAuthenticatedCaching({ 's-maxage': sMaxAge }),
+      false,
+      `invalid custom-store s-maxage ${sMaxAge} does not grant shared caching`,
+    )
+  }
+  t.equal(
+    allowsAuthenticatedCaching({ 's-maxage': 0 }),
+    true,
+    'valid non-negative s-maxage grants shared caching',
+  )
 
   // Serve-side guard for a custom/legacy store: a malformed s-maxage marker
   // must not unlock an authenticated cache hit even if such an entry exists.

@@ -5,6 +5,9 @@
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
   "files": [
     "lib/*"
   ],
@@ -29,6 +32,7 @@
     "prettier": "^3.9.5",
     "send": "^1.2.1",
     "tap": "^21.7.4",
+    "typescript": "^5.9.3",
     "undici-types": "^8.7.0"
   },
   "scripts": {
@@ -40,10 +44,12 @@
     "test:coverage": "tap test --coverage-report=text --coverage-report=html"
   },
   "lint-staged": {
-    "*.{js,jsx,md,ts}": [
+    "*.{js,jsx}": [
       "eslint",
       "prettier --write"
-    ]
+    ],
+    "*.md": "prettier --write",
+    "*.{ts,d.ts}": "prettier --write"
   },
   "prettier": {
     "printWidth": 100,

@@ -2,6 +2,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import tp from 'node:timers/promises'
+import { errors } from '@nxtedition/undici'
 import { compose, interceptors, request, getGlobalDispatcher } from '../lib/index.js'
 
 // Regression tests: a downstream abort that lands DURING the retry backoff
@@ -96,7 +97,7 @@ test('retry: abort during backoff delivers onError with the reason (raw dispatch
 // ---------------------------------------------------------------------------
 
 test('retry: reasonless abort during backoff falls back to RequestAbortedError', async (t) => {
-  t.plan(3)
+  t.plan(4)
 
   const server = await start503Server()
   t.teardown(server.close.bind(server))
@@ -143,6 +144,7 @@ test('retry: reasonless abort during backoff falls back to RequestAbortedError',
   const err = await Promise.race([onError, tp.setTimeout(2000, null)])
 
   t.ok(err, 'terminal onError delivered')
+  t.ok(err instanceof errors.RequestAbortedError, 'uses the dependency error class')
   t.equal(err?.code, 'UND_ERR_ABORTED', 'fallback is a RequestAbortedError')
   t.ok(Date.now() - abortedAt < 1500, 'terminal error is prompt')
 })

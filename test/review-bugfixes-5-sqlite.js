@@ -1,7 +1,7 @@
 // Regression tests for the 2026-07 cache deep-review fixes (sqlite store):
 // - #flush must not busy-loop on setImmediate when the SQLITE_FULL eviction
 //   query itself throws (batch pinned forever, CPU pegged, warning spam).
-// - schema v12: the lookup query must not need a temp B-tree sort (which
+// - the current schema's lookup query must not need a temp B-tree sort (which
 //   materialized every candidate row's body blob per get), and the body blob
 //   must be the last column so candidate filtering never walks its overflow
 //   pages.
@@ -106,8 +106,8 @@ test('#flush drops the batch instead of spinning when the FULL-eviction query th
   t.end()
 })
 
-test('schema v12: no temp B-tree sort on lookup; body blob is the last column', async (t) => {
-  const dbPath = tmpDb(t, 'v12-plan')
+test('schema v14: Date-ordered lookup needs no temp B-tree; body is last', async (t) => {
+  const dbPath = tmpDb(t, 'v14-plan')
   const store = new SqliteCacheStore({ location: dbPath })
   store.set(makeKey(), makeValue())
   await flush()
@@ -128,13 +128,14 @@ test('schema v12: no temp B-tree sort on lookup; body blob is the last column', 
   const cols = db.prepare(`PRAGMA table_info(${table})`).all()
   t.equal(cols[cols.length - 1].name, 'body', 'body is the last column')
 
-  // Mirror of #getValuesQuery's shape: same WHERE and ORDER BY. The (url,
-  // method) index must satisfy ORDER BY id DESC via a backward scan — no
+  // Mirror of #getValuesQuery's shape: same WHERE and ORDER BY. The
+  // (url, method, responseDate, id) index must satisfy Date ordering with no
   // temp B-tree, which would materialize every candidate row (incl. blobs).
   const plan = db
     .prepare(
       `EXPLAIN QUERY PLAN SELECT id, start, end, deleteAt FROM ${table}
-       WHERE url = ? AND method = ? AND start <= ? AND deleteAt > ? ORDER BY id DESC`,
+       WHERE url = ? AND method = ? AND start <= ? AND deleteAt > ?
+       ORDER BY responseDate DESC, id DESC`,
     )
     .all()
   t.notOk(

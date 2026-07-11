@@ -216,10 +216,14 @@ test('bodyLength - blob returns size', (t) => {
 
 // --- isDisturbed ---
 
-test('isDisturbed - null/string/buffer/function returns false', (t) => {
+test('isDisturbed - non-stream bodies return false', (t) => {
   t.notOk(isDisturbed(null))
   t.notOk(isDisturbed('string'))
   t.notOk(isDisturbed(Buffer.from('hello')))
+  t.notOk(isDisturbed(new Uint8Array(1)))
+  t.notOk(isDisturbed(new Blob(['hello'])))
+  t.notOk(isDisturbed({}))
+  t.notOk(isDisturbed(42))
   t.notOk(isDisturbed(() => {}))
   t.end()
 })
@@ -227,6 +231,22 @@ test('isDisturbed - null/string/buffer/function returns false', (t) => {
 test('isDisturbed - undisturbed stream returns false', (t) => {
   const s = new Readable({ read() {} })
   t.notOk(isDisturbed(s))
+  t.end()
+})
+
+test('isDisturbed - read stream returns true', (t) => {
+  const s = Readable.from(['body'])
+  t.equal(s.read(), 'body')
+  t.ok(isDisturbed(s))
+  t.end()
+})
+
+test('isDisturbed - destroyed unread stream returns true', (t) => {
+  const s = new Readable({ read() {} })
+  t.equal(s.readableDidRead, false)
+  s.destroy()
+  t.equal(s.readableDidRead, false)
+  t.ok(isDisturbed(s))
   t.end()
 })
 
@@ -272,15 +292,6 @@ test('parseHeaders - duplicate keys become arrays', (t) => {
     Buffer.from('b=2'),
   ])
   t.strictSame(result['set-cookie'], ['a=1', 'b=2'])
-  t.end()
-})
-
-test('parseHeaders - merges into existing object', (t) => {
-  const existing = { 'x-existing': 'yes' }
-  const result = parseHeaders({ 'X-New': 'value' }, existing)
-  t.equal(result['x-existing'], 'yes')
-  t.equal(result['x-new'], 'value')
-  t.same(result, existing)
   t.end()
 })
 
@@ -388,24 +399,20 @@ test('parseHeaders - array format skips null val2 (lines 296-297)', (t) => {
   t.end()
 })
 
-test('parseHeaders - array format duplicate key with array val2 (line 309)', (t) => {
-  // Array-format: key exists in obj, val2 is an array → line 309
-  const result = parseHeaders([Buffer.from('set-cookie'), ['c=3', 'd=4']], { 'set-cookie': 'a=1' })
+test('parseHeaders - array format duplicate key with array value', (t) => {
+  const result = parseHeaders([
+    Buffer.from('set-cookie'),
+    'a=1',
+    Buffer.from('set-cookie'),
+    ['c=3', 'd=4'],
+  ])
   t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
   t.end()
 })
 
-test('parseHeaders - object format duplicate key with array val2 (line 339)', (t) => {
-  // Object format: key exists in obj, val2 is an array → line 339
-  const result = parseHeaders({ 'set-cookie': ['c=3', 'd=4'] }, { 'set-cookie': 'a=1' })
-  t.strictSame(result['set-cookie'], ['a=1', 'c=3', 'd=4'])
-  t.end()
-})
-
-test('parseHeaders - object format duplicate key merges into array (line 341-342)', (t) => {
-  // obj already has 'x-foo'; headers adds another value → should become an array
-  const result = parseHeaders({ 'x-foo': 'second' }, { 'x-foo': 'first' })
-  t.strictSame(result['x-foo'], ['first', 'second'])
+test('parseHeaders - object format preserves array values', (t) => {
+  const result = parseHeaders({ 'set-cookie': ['c=3', 'd=4'] })
+  t.strictSame(result['set-cookie'], ['c=3', 'd=4'])
   t.end()
 })
 

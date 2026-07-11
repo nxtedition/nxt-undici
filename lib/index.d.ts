@@ -128,6 +128,8 @@ export interface DispatchOptions {
 }
 
 export interface RetryOptions {
+  /** Maximum retries after the initial attempt (default 8). Must be a
+   *  non-negative safe integer; invalid runtime values disable retries. */
   count?: number
   /** Cap on the exponential backoff between attempts, in milliseconds
    *  (default 60_000; clamped to the ~2^31−1 ms timer max). The first retry is

@@ -427,13 +427,13 @@ test('parseHeaders - content-disposition value is preserved verbatim (ascii)', (
 })
 
 test('parseHeaders - content-disposition with non-ASCII filename is not corrupted', (t) => {
-  // Regression: a latin1 re-encode used to double-mojibake non-ASCII values
-  // whenever content-length was also present.
+  // Raw header Buffers contain HTTP bytes. Use Latin-1 here, matching the
+  // byte-to-code-point mapping used by Node and Undici for header values.
   const result = parseHeaders([
     Buffer.from('content-length'),
     Buffer.from('42'),
     Buffer.from('content-disposition'),
-    Buffer.from('attachment; filename="naïve.txt"', 'utf8'),
+    Buffer.from('attachment; filename="naïve.txt"', 'latin1'),
   ])
   t.equal(result['content-disposition'], 'attachment; filename="naïve.txt"')
   t.end()

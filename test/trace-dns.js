@@ -40,7 +40,7 @@ async function waitForRefreshWindow(cachedAt, ttl) {
   // uses Date.now(). Wait until both clocks are past half-life so this remains
   // deterministic on either implementation, while the entry is still fresh.
   while (Date.now() - started <= halfTTL || getFastNow() - cachedAt <= halfTTL) {
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
 
@@ -163,7 +163,7 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
   const lookup = (hostname, opts, cb) => cb(null, [{ address: '127.0.0.1' }])
   const writer = makeWriter()
   const dispatcher = makeDispatcher(t)
-  const ttl = 4000
+  const ttl = 1999
 
   // Populate and refresh the exact same policy. Different policies now own
   // independent cache entries and must not be used as a refresh shortcut.
@@ -216,7 +216,7 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
 
   const writer = makeWriter()
   const dispatcher = makeDispatcher(t)
-  const ttl = 4000
+  const ttl = 1999
 
   // Hold the same-policy refresh open so both requests provably join one
   // in-flight lookup.

@@ -115,6 +115,21 @@ test('Retry-After accepts delay-seconds digits and clamps huge values', async (t
   )
 })
 
+test('Retry-After arrays use their first field occurrence', async (t) => {
+  t.equal(await captureSecondRetryDelay(t, ['1']), 1_000, 'single-value arrays are honored')
+  t.equal(
+    await captureSecondRetryDelay(t, ['1', '9']),
+    1_000,
+    'the first duplicate determines the delay',
+  )
+
+  const fallback = await captureSecondRetryDelay(t, ['-1', '1'])
+  t.ok(
+    fallback >= 100 && fallback < 200,
+    `an invalid first duplicate falls back instead of scanning later values (${fallback}ms)`,
+  )
+})
+
 test('Retry-After continues to accept an HTTP date', async (t) => {
   const date = new Date(Date.now() + 60_000).toUTCString()
   const delay = await captureSecondRetryDelay(t, ` \t${date}\t `)

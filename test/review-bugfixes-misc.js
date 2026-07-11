@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Regression tests for interceptor/entry-point bugs found during the in-depth
 // review: proxy via-loop & Connection casing, response-verify abort, retry
 // resume-at-0 & content-range mismatch & Retry-After, EventEmitter signals,

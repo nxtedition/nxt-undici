@@ -58,6 +58,20 @@ test('parseCacheControl - array value is combined and parsed', (t) => {
   t.end()
 })
 
+test('parseCacheControl - quoted-string state spans duplicated field lines', (t) => {
+  t.strictSame(
+    parseCacheControl(['example="unterminated', 'public, s-maxage=3600']),
+    {},
+    'a later field line cannot escape an unterminated extension value',
+  )
+  t.strictSame(
+    parseCacheControl(['no-cache="set-cookie', 'x-secret"', 'max-age=60']),
+    { 'no-cache': ['set-cookie', 'x-secret'], 'max-age': 60 },
+    'a quoted field-name list can legitimately continue across field lines',
+  )
+  t.end()
+})
+
 test('parseCacheControl - commas inside extension quoted strings stay data', (t) => {
   t.strictSame(
     parseCacheControl('example="x, max-age=31536000, public"'),
@@ -84,6 +98,7 @@ test('parseCacheControl - single-element array', (t) => {
 
 test('parseCacheControl - non-string values return null', (t) => {
   t.equal(parseCacheControl([]), null)
+  t.equal(parseCacheControl(['public', 1]), null)
   t.equal(parseCacheControl(123), null)
   t.equal(parseCacheControl(null), null)
   t.equal(parseCacheControl(undefined), null)

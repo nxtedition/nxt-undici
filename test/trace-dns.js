@@ -191,7 +191,7 @@ test('trace-dns: pre-emptive refresh emits a refresh doc', async (t) => {
   while (refresh == null && performance.now() < deadline) {
     refresh = writer.docs.find((d) => d.op === 'undici:dns' && d.source === 'refresh')
     if (refresh == null) {
-      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setTimeout(resolve, 10))
     }
   }
 
@@ -254,7 +254,7 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
   })
   const releaseDeadline = performance.now() + 1000
   while (release == null && performance.now() < releaseDeadline) {
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   t.type(release, 'function', 'refresh lookup started')
   release?.()
@@ -272,7 +272,7 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
   while (refreshes.length === 0 && performance.now() < deadline) {
     refreshes = writer.docs.filter((d) => d.op === 'undici:dns' && d.source === 'refresh')
     if (refreshes.length === 0) {
-      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setTimeout(resolve, 10))
     }
   }
   // Settle any stragglers before counting.

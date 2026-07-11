@@ -34,6 +34,48 @@ test('initial dispatch Promise rejection reaches onError without becoming unhand
   t.same(unhandled, [], 'the rejected dispatch Promise was observed')
 })
 
+test('Promise rejections from later attempts consume the remaining retry budget', async (t) => {
+  const reason = Object.assign(new Error('async dispatch failed'), { code: 'ECONNRESET' })
+  const completed = Promise.withResolvers()
+  const errors = []
+  let attempts = 0
+
+  const dispatch = responseRetry()((dispatchOpts, handler) => {
+    attempts++
+    if (attempts < 3) {
+      return Promise.reject(reason)
+    }
+
+    handler.onConnect(() => {})
+    handler.onHeaders(200, { 'content-length': '2' }, () => {})
+    handler.onData(Buffer.from('ok'))
+    handler.onComplete({})
+  })
+  dispatch(
+    { ...opts, retry: { count: 2, maxDelay: 0 } },
+    {
+      onConnect() {},
+      onHeaders() {
+        return true
+      },
+      onData() {
+        return true
+      },
+      onComplete: completed.resolve,
+      onError(err) {
+        errors.push(err)
+        completed.resolve()
+      },
+    },
+  )
+
+  await completed.promise
+  await tick()
+
+  t.equal(attempts, 3, 'both rejected attempts were retried')
+  t.same(errors, [], 'the successful final attempt completed normally')
+})
+
 test('a rejected result does not duplicate a retry already started by onError', async (t) => {
   const reason = Object.assign(new Error('duplicate async dispatch failure'), {
     code: 'ECONNRESET',
@@ -50,6 +92,9 @@ test('a rejected result does not duplicate a retry already started by onError', 
     attempts++
     handler.onConnect(() => {})
     if (attempts === 1) {
+      return Promise.reject(reason)
+    }
+    if (attempts === 2) {
       handler.onError(reason)
       return Promise.reject(reason)
     }
@@ -59,7 +104,7 @@ test('a rejected result does not duplicate a retry already started by onError', 
     handler.onComplete({})
   })
   dispatch(
-    { ...opts, retry: { count: 1, maxDelay: 0 } },
+    { ...opts, retry: { count: 2, maxDelay: 0 } },
     {
       onConnect() {},
       onHeaders(value) {
@@ -80,7 +125,7 @@ test('a rejected result does not duplicate a retry already started by onError', 
   await tick()
   await tick()
 
-  t.equal(attempts, 2, 'one initial attempt and one retry')
+  t.equal(attempts, 3, 'the dual terminal signal started only one additional retry')
   t.equal(statusCode, 200)
   t.same(unhandled, [], 'the redundant rejected Promise was still observed')
 })

@@ -335,14 +335,16 @@ test('log: real URL instance origin uses its credential-free origin', async (t) 
 })
 
 // ---------------------------------------------------------------------------
-// Copy-on-write fast path: nothing to redact → no new objects are allocated
+// Log metadata is snapshotted without replacing the wire object
 // ---------------------------------------------------------------------------
 
-test('log: clean headers and origin are passed through by reference (no copy)', async (t) => {
+test('log: clean headers are snapshotted without replacing the wire object', async (t) => {
   // Drive the interceptor over a stub dispatch so the exact opts objects reach
-  // the log handler and identity can be asserted on the captured binding.
+  // the log handler and both wire/log identity can be asserted.
   const logger = makeCapturingLogger()
+  let dispatchedHeaders
   const dispatch = interceptors.log()((opts, handler) => {
+    dispatchedHeaders = opts.headers
     handler.onConnect(() => {})
     handler.onHeaders(200, ['content-length', '0'], () => {})
     handler.onComplete([])
@@ -359,7 +361,10 @@ test('log: clean headers and origin are passed through by reference (no copy)', 
 
   const ureq = logger.bindings[0]?.ureq
   t.ok(ureq, 'child() was called with a ureq binding')
-  t.equal(ureq.headers, headers, 'zero-mutation header object bound by reference, not copied')
+  t.equal(dispatchedHeaders, headers, 'logging preserves the exact wire header object')
+  t.not(ureq.headers, headers, 'log headers are an isolated snapshot')
+  t.not(ureq.headers['x-multi'], headers['x-multi'], 'repeated values are isolated too')
+  t.strictSame(ureq.headers, headers, 'the snapshot preserves normalized values')
   t.equal(ureq.origin, origin, 'origin without userinfo logged as-is without URL parsing')
   t.equal(ureq.headers['x-plain'], 'visible-value', 'values still readable through the binding')
 })

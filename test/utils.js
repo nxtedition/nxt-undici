@@ -216,10 +216,14 @@ test('bodyLength - blob returns size', (t) => {
 
 // --- isDisturbed ---
 
-test('isDisturbed - null/string/buffer/function returns false', (t) => {
+test('isDisturbed - non-stream bodies return false', (t) => {
   t.notOk(isDisturbed(null))
   t.notOk(isDisturbed('string'))
   t.notOk(isDisturbed(Buffer.from('hello')))
+  t.notOk(isDisturbed(new Uint8Array(1)))
+  t.notOk(isDisturbed(new Blob(['hello'])))
+  t.notOk(isDisturbed({}))
+  t.notOk(isDisturbed(42))
   t.notOk(isDisturbed(() => {}))
   t.end()
 })
@@ -227,6 +231,22 @@ test('isDisturbed - null/string/buffer/function returns false', (t) => {
 test('isDisturbed - undisturbed stream returns false', (t) => {
   const s = new Readable({ read() {} })
   t.notOk(isDisturbed(s))
+  t.end()
+})
+
+test('isDisturbed - read stream returns true', (t) => {
+  const s = Readable.from(['body'])
+  t.equal(s.read(), 'body')
+  t.ok(isDisturbed(s))
+  t.end()
+})
+
+test('isDisturbed - destroyed unread stream returns true', (t) => {
+  const s = new Readable({ read() {} })
+  t.equal(s.readableDidRead, false)
+  s.destroy()
+  t.equal(s.readableDidRead, false)
+  t.ok(isDisturbed(s))
   t.end()
 })
 

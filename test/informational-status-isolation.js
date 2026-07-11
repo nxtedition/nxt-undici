@@ -64,6 +64,7 @@ test('log clears a previous attempt when Early Hints precede a failure', async (
   }
   t.equal(failed.ures.statusCode, undefined, 'does not log 103 as a terminal status')
   t.equal(failed.ures.headers, undefined, 'does not log Early Hints as terminal headers')
+  t.equal(failed.ures.timing.headers, -1, 'clears prior terminal-header timing')
 })
 
 test('response-error clears a previous attempt when Early Hints precede a failure', async (t) => {

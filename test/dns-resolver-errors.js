@@ -1,5 +1,4 @@
 import { test } from 'tap'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { interceptors } from '../lib/index.js'
 
 function request(dispatch, dns) {
@@ -46,10 +45,6 @@ test('dns: a synchronously throwing resolver is cleared and can recover', async 
   const dns = { lookup, negativeTTL: 0 }
 
   await t.rejects(request(dispatch, dns), /resolver exploded/)
-
-  // getFastNow() advances once per second. Wait for a tick so the zero-length
-  // negative-cache entry is expired before checking that resolution retries.
-  await sleep(1500)
 
   t.equal(await request(dispatch, dns), 200)
   t.equal(calls, 2, 'the rejected in-flight promise was not retained forever')

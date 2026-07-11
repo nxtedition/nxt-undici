@@ -186,3 +186,38 @@ test('log sanitizes errors thrown synchronously by an inner dispatch', (t) => {
   t.notMatch(capture.output(), /nested-arbitrary-secret/)
   t.end()
 })
+
+test('log preserves repeated AggregateError diagnostics without treating them as cycles', (t) => {
+  const capture = captureLogger()
+  const shared = Object.assign(new Error('shared diagnostic'), {
+    token: 'shared-aggregate-secret',
+  })
+  const failure = new AggregateError([shared, shared], 'aggregate dispatch failure')
+  const dispatch = interceptors.log()(() => {
+    throw failure
+  })
+
+  t.throws(
+    () =>
+      dispatch(
+        {
+          origin: 'http://example.test',
+          path: '/',
+          method: 'GET',
+          headers: {},
+          logger: capture.logger,
+        },
+        {},
+      ),
+    failure,
+  )
+
+  t.match(capture.output(), /shared diagnostic/, 'retains diagnostics from a shared error')
+  t.notMatch(
+    capture.output(),
+    /Circular error reference/,
+    'does not misclassify a repeated sibling',
+  )
+  t.notMatch(capture.output(), /shared-aggregate-secret/, 'still strips custom sibling data')
+  t.end()
+})

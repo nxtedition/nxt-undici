@@ -46,3 +46,24 @@ test('AbortSignal listener disposable is cleaned up on request error', (t) => {
   t.equal(getEventListeners(controller.signal, 'abort').length, 0, 'listener is disposed')
   t.end()
 })
+
+test('generic EventTarget abort compatibility is retained', (t) => {
+  const signal = new EventTarget()
+  const handler = new RequestHandler(
+    { method: 'GET', body: null, signal },
+    (result) => void result.catch(() => {}),
+  )
+  let transportReason
+
+  handler.onConnect((reason) => {
+    transportReason = reason
+  })
+  signal.dispatchEvent(new Event('abort'))
+
+  t.equal(transportReason?.code, 'UND_ERR_ABORTED', 'generic abort reaches transport')
+
+  handler.onError(transportReason)
+
+  t.equal(getEventListeners(signal, 'abort').length, 0, 'generic listener is removed')
+  t.end()
+})

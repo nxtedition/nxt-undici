@@ -55,8 +55,7 @@ test('dns: lookup failures are negative-cached (one lookup per window)', async (
     t.fail('dispatch must not be reached when lookup fails')
   })
 
-  // getFastNow() (the interceptor clock) only ticks once per second, so use a
-  // window comfortably larger than the test's runtime plus one tick.
+  // Keep the window comfortably larger than the test's runtime.
   const dns = { negativeTTL: 5000, lookup }
 
   for (let i = 0; i < 5; i++) {
@@ -104,10 +103,9 @@ test('dns: negative entry expires after negativeTTL and the next lookup recovers
   )
   t.equal(lookups, 1, 'first request performed the lookup')
 
-  // getFastNow() advances only once per second, so sleep long enough to
-  // guarantee at least one tick lands past the 50 ms expiry.
+  // DNS expiry uses the real millisecond clock; wait just past the 50 ms TTL.
   failing = false
-  await sleep(1500)
+  await sleep(75)
 
   const status = await run(dispatch, { origin: 'http://recovers.invalid', dns })
   t.equal(status, 200, 'request succeeds once DNS recovers')

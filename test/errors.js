@@ -1,69 +1,56 @@
-/* eslint-disable */
+import { errors } from '@nxtedition/undici'
 import { test } from 'tap'
 import {
-  UndiciError,
-  InvalidArgumentError,
   AbortError,
+  InvalidArgumentError,
   RequestAbortedError,
+  UndiciError,
 } from '../lib/errors.js'
+import { RequestHandler } from '../lib/request.js'
+import { validateTrace } from '../lib/trace.js'
 
-test('UndiciError', (t) => {
-  const err = new UndiciError('test message')
-  t.ok(err instanceof Error)
-  t.ok(err instanceof UndiciError)
-  t.equal(err.name, 'UndiciError')
-  t.equal(err.code, 'UND_ERR')
-  t.equal(err.message, 'test message')
+test('deep-import error facade preserves dependency constructor identity', (t) => {
+  t.equal(UndiciError, errors.UndiciError)
+  t.equal(InvalidArgumentError, errors.InvalidArgumentError)
+  t.equal(AbortError, errors.AbortError)
+  t.equal(RequestAbortedError, errors.RequestAbortedError)
   t.end()
 })
 
-test('InvalidArgumentError', (t) => {
-  const err = new InvalidArgumentError('bad arg')
-  t.ok(err instanceof Error)
-  t.ok(err instanceof UndiciError)
-  t.ok(err instanceof InvalidArgumentError)
-  t.equal(err.name, 'InvalidArgumentError')
-  t.equal(err.code, 'UND_ERR_INVALID_ARG')
-  t.equal(err.message, 'bad arg')
+test('request validation uses the dependency InvalidArgumentError', (t) => {
+  const err = t.throws(
+    () => new RequestHandler({ method: 'GET', body: null }, 'not-a-function'),
+    /invalid resolve/,
+  )
+
+  t.ok(err instanceof errors.InvalidArgumentError)
+  t.equal(err.constructor, errors.InvalidArgumentError)
   t.end()
 })
 
-test('InvalidArgumentError default message', (t) => {
-  const err = new InvalidArgumentError()
-  t.equal(err.message, 'Invalid Argument Error')
+test('trace validation uses the dependency InvalidArgumentError', (t) => {
+  const err = t.throws(() => validateTrace({}), /invalid trace/)
+
+  t.ok(err instanceof errors.InvalidArgumentError)
+  t.equal(err.constructor, errors.InvalidArgumentError)
   t.end()
 })
 
-test('AbortError', (t) => {
-  const err = new AbortError('aborted')
-  t.ok(err instanceof Error)
-  t.ok(err instanceof UndiciError)
-  t.ok(err instanceof AbortError)
-  t.equal(err.name, 'AbortError')
-  t.equal(err.message, 'aborted')
-  t.end()
-})
+test('request abort fallback uses the dependency RequestAbortedError', (t) => {
+  const signal = {
+    aborted: true,
+    reason: undefined,
+    addEventListener() {},
+    removeEventListener() {},
+  }
+  const handler = new RequestHandler({ method: 'GET', body: null, signal }, () => {})
+  let reason
 
-test('AbortError default message', (t) => {
-  const err = new AbortError()
-  t.equal(err.message, 'The operation was aborted')
-  t.end()
-})
+  handler.onConnect((err) => {
+    reason = err
+  })
 
-test('RequestAbortedError', (t) => {
-  const err = new RequestAbortedError('req aborted')
-  t.ok(err instanceof Error)
-  t.ok(err instanceof UndiciError)
-  t.ok(err instanceof AbortError)
-  t.ok(err instanceof RequestAbortedError)
-  t.equal(err.name, 'AbortError')
-  t.equal(err.code, 'UND_ERR_ABORTED')
-  t.equal(err.message, 'req aborted')
-  t.end()
-})
-
-test('RequestAbortedError default message', (t) => {
-  const err = new RequestAbortedError()
-  t.equal(err.message, 'Request aborted')
+  t.ok(reason instanceof errors.RequestAbortedError)
+  t.equal(reason.constructor, errors.RequestAbortedError)
   t.end()
 })

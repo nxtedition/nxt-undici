@@ -121,7 +121,7 @@ test('trace-priority: contended slot emits queued doc, both requests get end doc
     op: 'undici:priority',
     phase: 'end',
     id: 'req-1',
-    key: 'example.com',
+    key: 'http://example.com',
     priority: 'high',
     pending: null,
   })
@@ -137,7 +137,7 @@ test('trace-priority: contended slot emits queued doc, both requests get end doc
     op: 'undici:priority',
     phase: 'end',
     id: 'req-2',
-    key: 'example.com',
+    key: 'http://example.com',
     priority: 'high',
     pending: null,
   })

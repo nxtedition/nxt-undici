@@ -88,3 +88,33 @@ test('priority: equivalent OriginLike arrays share one scheduler', (t) => {
   calls[0].handler.onConnect(() => {})
   t.equal(calls.length, 2, 'the equivalent origin pool shares the scheduler')
 })
+
+test('priority: DNS pools collapse duplicate logical origins', (t) => {
+  t.plan(2)
+  const { calls, dispatch } = capturingPriority()
+  const base = { headers: { host: 'service.test' }, priority: 'high' }
+
+  dispatch({ ...base, origin: ['http://192.0.2.1', 'http://192.0.2.2'] }, handler)
+  dispatch({ ...base, origin: 'http://192.0.2.3' }, handler)
+
+  t.equal(calls.length, 1, 'pool length does not alter the logical-origin key')
+  calls[0].handler.onConnect(() => {})
+  t.equal(calls.length, 2, 'the scalar address shares the pool scheduler')
+})
+
+test('priority: malformed Host values do not crash key construction', (t) => {
+  const { calls, dispatch } = capturingPriority()
+
+  t.doesNotThrow(() =>
+    dispatch(
+      {
+        origin: 'http://192.0.2.1',
+        headers: { host: 'not a valid authority' },
+        priority: 'high',
+      },
+      handler,
+    ),
+  )
+  t.equal(calls.length, 1, 'the request falls back to its configured origin')
+  t.end()
+})

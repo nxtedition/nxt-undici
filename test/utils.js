@@ -230,6 +230,22 @@ test('isDisturbed - undisturbed stream returns false', (t) => {
   t.end()
 })
 
+test('isDisturbed - read stream returns true', (t) => {
+  const s = Readable.from(['body'])
+  t.equal(s.read(), 'body')
+  t.ok(isDisturbed(s))
+  t.end()
+})
+
+test('isDisturbed - destroyed unread stream returns true', (t) => {
+  const s = new Readable({ read() {} })
+  t.equal(s.readableDidRead, false)
+  s.destroy()
+  t.equal(s.readableDidRead, false)
+  t.ok(isDisturbed(s))
+  t.end()
+})
+
 // --- parseHeaders ---
 
 test('parseHeaders - array format', (t) => {

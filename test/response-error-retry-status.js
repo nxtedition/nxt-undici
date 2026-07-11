@@ -182,3 +182,35 @@ test('response error tolerates primitive inner response metadata', async (t) => 
   t.strictSame(err.res, { statusCode: undefined, headers: null, trailers: null })
   t.equal(err.req.origin, 'http://example.test', 'still decorates request metadata')
 })
+
+test('response error replaces incomplete inner response metadata', async (t) => {
+  const headers = { 'x-attempt': 'captured' }
+  const innerError = Object.assign(new Error('response interrupted'), { res: {} })
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(503, headers, () => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err, innerError, 'forwards the original error')
+  t.strictSame(err.res, { statusCode: 503, headers, trailers: null })
+  t.equal(err.req.origin, 'http://example.test', 'decorates request metadata')
+})

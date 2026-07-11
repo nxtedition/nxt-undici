@@ -7,7 +7,7 @@ import { test } from 'tap'
 import crypto from 'node:crypto'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { request, compose, interceptors, parseHeaders, cache as cacheModule } from '../lib/index.js'
+import { request, compose, interceptors, parseHeaders } from '../lib/index.js'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 import undici from '@nxtedition/undici'
 

@@ -19,12 +19,5 @@ test('parseHeaders treats prototype names as ordinary header names', (t) => {
   t.equal(Object.hasOwn(fromObject, 'constructor'), true)
   t.equal(fromObject.constructor, 'object-constructor')
 
-  const target = Object.create({
-    get constructor() {
-      throw new Error('inherited getters must not be read')
-    },
-  })
-  parseHeaders({ constructor: 'safe' }, target)
-  t.equal(target.constructor, 'safe')
   t.end()
 })

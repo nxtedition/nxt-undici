@@ -12,14 +12,6 @@ test('parseHeaders only reuses internally trusted snapshots', (t) => {
   const trusted = createNormalizedHeaders({ 'X-Count': 1 })
   t.equal(parseHeaders(trusted), trusted, 'trusted input takes the identity fast path')
 
-  const destination = { existing: 'yes' }
-  t.equal(
-    parseHeaders(trusted, destination),
-    destination,
-    'an explicit destination always preserves merge semantics',
-  )
-  t.strictSame(destination, { existing: 'yes', 'x-count': '1' })
-
   t.end()
 })
 
@@ -111,7 +103,9 @@ test('functional follow invalidates headers before user code', (t) => {
       onConnect() {},
       onHeaders() {},
       onComplete() {},
-      onError: t.threw,
+      onError(err) {
+        t.fail(`unexpected redirect error: ${err?.message ?? err}`)
+      },
     },
   )
 

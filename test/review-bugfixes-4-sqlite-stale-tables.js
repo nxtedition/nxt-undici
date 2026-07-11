@@ -30,6 +30,92 @@ function tableNames(db) {
     .map(({ name }) => name)
 }
 
+test('v13 is rejected byte-for-byte before the v14 table is created', (t) => {
+  const dbPath = tmpDb(t, 'schema-v13-to-v14')
+  const seed = new DatabaseSync(dbPath)
+  seed.exec(`
+    CREATE TABLE cacheInterceptorV13 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      body BLOB
+    );
+    INSERT INTO cacheInterceptorV13 (url, body)
+      VALUES ('https://old.example.com/secret', x'deadbeef');
+  `)
+  seed.close()
+  const before = fs.readFileSync(dbPath)
+
+  let error
+  try {
+    new SqliteCacheStore({ location: dbPath })
+    t.fail('construction should reject schema v13')
+  } catch (err) {
+    error = err
+  }
+
+  t.equal(error?.code, 'ERR_SQLITE_CACHE_SCHEMA_MISMATCH')
+  t.match(error?.message, /expected cacheInterceptorV14, found cacheInterceptorV13/)
+  t.strictSame(fs.readFileSync(dbPath), before, 'the v13 database is byte-for-byte unchanged')
+
+  const check = new DatabaseSync(dbPath, { readOnly: true })
+  t.teardown(() => check.close())
+  t.strictSame(
+    tableNames(check).filter((name) => /^cacheInterceptorV\d+$/.test(name)),
+    ['cacheInterceptorV13'],
+    'v14 was not created and v13 was not dropped',
+  )
+  t.equal(
+    check.prepare('SELECT hex(body) AS body FROM cacheInterceptorV13').get().body,
+    'DEADBEEF',
+    'v13 data remains readable to an operator-selected older package',
+  )
+  t.end()
+})
+
+test('v14 operates and persists Authorization provenance with response Date', (t) => {
+  const dbPath = tmpDb(t, 'schema-v14')
+  const key = {
+    origin: 'https://example.com',
+    method: 'GET',
+    path: '/authorized',
+    headers: {},
+  }
+  const now = Date.now()
+  const store = new SqliteCacheStore({ location: dbPath })
+  store.set(key, {
+    body: Buffer.from('secret'),
+    start: 0,
+    end: 6,
+    statusCode: 200,
+    statusMessage: 'OK',
+    authorizationRequest: true,
+    cachedAt: now,
+    staleAt: now + 60e3,
+    deleteAt: now + 120e3,
+  })
+  store.close()
+
+  const reopened = new SqliteCacheStore({ location: dbPath })
+  const value = reopened.get(key)
+  t.equal(value?.body.toString(), 'secret')
+  t.equal(value?.authorizationRequest, true)
+  reopened.close()
+
+  const check = new DatabaseSync(dbPath, { readOnly: true })
+  t.teardown(() => check.close())
+  t.ok(tableNames(check).includes('cacheInterceptorV14'), 'the current v14 table exists')
+  const columns = check.prepare('PRAGMA table_info(cacheInterceptorV14)').all()
+  t.ok(
+    columns.some(({ name }) => name === 'authorizationRequest'),
+    'v14 has provenance',
+  )
+  t.ok(
+    columns.some(({ name }) => name === 'responseDate'),
+    'v14 has response Date ordering',
+  )
+  t.end()
+})
+
 test('incompatible cache schema versions fail without modifying the database', (t) => {
   const dbPath = tmpDb(t, 'schema-mismatch')
   const seed = new DatabaseSync(dbPath)

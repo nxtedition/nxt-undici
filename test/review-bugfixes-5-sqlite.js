@@ -106,8 +106,8 @@ test('#flush drops the batch instead of spinning when the FULL-eviction query th
   t.end()
 })
 
-test('schema v13: Date-ordered lookup needs no temp B-tree; body is last', async (t) => {
-  const dbPath = tmpDb(t, 'v13-plan')
+test('schema v14: Date-ordered lookup needs no temp B-tree; body is last', async (t) => {
+  const dbPath = tmpDb(t, 'v14-plan')
   const store = new SqliteCacheStore({ location: dbPath })
   store.set(makeKey(), makeValue())
   await flush()

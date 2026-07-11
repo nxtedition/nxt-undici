@@ -58,6 +58,25 @@ test('parseCacheControl - array value is combined and parsed', (t) => {
   t.end()
 })
 
+test('parseCacheControl - commas inside extension quoted strings stay data', (t) => {
+  t.strictSame(
+    parseCacheControl('example="x, max-age=31536000, public"'),
+    {},
+    'an unknown extension cannot inject freshness or shared-cache permission',
+  )
+  t.strictSame(
+    parseCacheControl('example="x, no-store", max-age=60'),
+    { 'max-age': 60 },
+    'quoted directive-shaped text is ignored while the following real directive is parsed',
+  )
+  t.strictSame(
+    parseCacheControl('no-cache="set-cookie, x-secret", max-age=60'),
+    { 'no-cache': ['set-cookie', 'x-secret'], 'max-age': 60 },
+    'qualified field-name lists still split their quoted argument',
+  )
+  t.end()
+})
+
 test('parseCacheControl - single-element array', (t) => {
   t.strictSame(parseCacheControl(['no-store']), { 'no-store': true })
   t.end()
@@ -73,14 +92,14 @@ test('parseCacheControl - non-string values return null', (t) => {
 })
 
 test('parseCacheControl - negative delta-seconds are rejected (RFC 9111 non-negative)', (t) => {
-  // Malformed max-age/s-maxage surface as explicit 0 ("already expired",
-  // mirroring invalid Expires) rather than absent — absence would fall
-  // through to Expires/heuristics. See review-bugfixes-5-directives.js.
+  // Malformed max-age/s-maxage remain explicitly stale rather than absent —
+  // absence would fall through to Expires/heuristics. s-maxage needs a
+  // distinct sentinel because valid s-maxage=0 grants authenticated caching.
   t.strictSame(parseCacheControl('max-age=-1'), { 'max-age': 0 }, 'negative max-age -> stale')
   t.strictSame(
     parseCacheControl('s-maxage=-5, max-age=10'),
-    { 's-maxage': 0, 'max-age': 10 },
-    'negative s-maxage -> stale, valid max-age kept',
+    { 's-maxage': false, 'max-age': 10 },
+    'invalid s-maxage remains distinguishable from valid s-maxage=0',
   )
   t.strictSame(parseCacheControl('stale-if-error=-3'), {}, 'negative stale-if-error dropped')
   t.end()
@@ -196,8 +215,8 @@ test('parseCacheControl - delta-seconds must be all digits (1*DIGIT)', (t) => {
   t.strictSame(parseCacheControl('max-age="60"'), { 'max-age': 60 }, 'quoted integer still parses')
   t.strictSame(
     parseCacheControl('s-maxage=60x, max-age=10'),
-    { 's-maxage': 0, 'max-age': 10 },
-    'malformed s-maxage surfaces as stale, valid directive kept',
+    { 's-maxage': false, 'max-age': 10 },
+    'malformed s-maxage surfaces as an invalid/stale sentinel',
   )
   t.end()
 })

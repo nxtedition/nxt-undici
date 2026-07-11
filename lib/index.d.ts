@@ -280,6 +280,8 @@ export interface CacheValue {
   start: number
   end: number
   cacheControlDirectives?: Record<string, unknown>
+  /** True when the response was obtained from a request carrying Authorization. */
+  authorizationRequest?: boolean
   etag?: string
   vary?: Record<string, string | string[]>
   cachedAt: number
@@ -295,6 +297,8 @@ export interface CacheGetResult {
   body?: Buffer
   etag?: string
   cacheControlDirectives?: Record<string, unknown>
+  /** True when the response was obtained from a request carrying Authorization. */
+  authorizationRequest?: boolean
   vary?: Record<string, string | string[]>
   cachedAt: number
   staleAt: number

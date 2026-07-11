@@ -66,3 +66,34 @@ test('retry callback mutations do not break request trace correlation', async (t
     retryCount: 0,
   })
 })
+
+test('successful retry-eligible requests do not resolve retry trace state', (t) => {
+  let traceReads = 0
+  const dispatch = interceptors.responseRetry()((_opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, { 'content-length': '0' }, () => {})
+    handler.onComplete({})
+  })
+
+  dispatch(
+    {
+      method: 'GET',
+      retry: true,
+      get trace() {
+        traceReads++
+        return null
+      },
+    },
+    {
+      onConnect() {},
+      onHeaders() {},
+      onComplete() {},
+      onError(err) {
+        throw err
+      },
+    },
+  )
+
+  t.equal(traceReads, 0)
+  t.end()
+})

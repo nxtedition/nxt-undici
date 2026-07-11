@@ -52,6 +52,8 @@ test('public declarations compile', (t) => {
       '--strict',
       '--target',
       'ES2024',
+      '--lib',
+      'ES2024',
       '--module',
       'NodeNext',
       '--moduleResolution',

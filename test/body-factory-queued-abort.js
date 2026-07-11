@@ -74,7 +74,7 @@ test('queued request abort promptly releases its body factory', async (t) => {
 
   t.equal(await firstResult, releaseReason, 'the occupying request is released')
   t.equal(await secondResult, abortReason, 'the queued request later settles with its abort reason')
-  t.equal(dispatched.length, 2, 'the queued attempt only reaches dispatch after release')
+  t.equal(dispatched.length, 1, 'the aborted queued attempt never reaches dispatch')
 })
 
 test('completed factory body removes its request abort listener', async (t) => {

@@ -278,3 +278,37 @@ test('response error ignores an invalid top-level status', async (t) => {
   t.equal(err.statusCode, 503, 'falls back to the captured numeric status')
   t.equal(err.res.headers, headers, 'keeps metadata captured for that status')
 })
+
+test('response error contains decoration failures for frozen inner errors', async (t) => {
+  const innerError = Object.freeze(
+    Object.assign(new Error('terminal response failed'), {
+      res: { statusCode: 503, headers: {}, trailers: null },
+    }),
+  )
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.type(err, AggregateError, 'forwards a contained decoration failure')
+  t.type(err.errors[0], TypeError, 'retains the mutation failure')
+  t.equal(err.errors[1], innerError, 'retains the original frozen error')
+})

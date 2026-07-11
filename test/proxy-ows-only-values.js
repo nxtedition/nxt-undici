@@ -33,6 +33,38 @@ function requestHeaders(headers, proxy) {
   return captured
 }
 
+function responseHeaders(headers) {
+  let captured
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(200, headers, () => {})
+    handler.onComplete({})
+  }, interceptors.proxy())
+
+  dispatch(
+    {
+      origin: 'http://upstream.test',
+      path: '/',
+      method: 'GET',
+      headers: {},
+      proxy: {},
+    },
+    {
+      onConnect() {},
+      onHeaders(_statusCode, receivedHeaders) {
+        captured = receivedHeaders
+        return true
+      },
+      onData() {},
+      onComplete() {},
+      onError(err) {
+        throw err
+      },
+    },
+  )
+  return captured
+}
+
 test('proxy: OWS-only scalar Via does not create an empty list member', (t) => {
   const headers = requestHeaders({ via: ' \t ' }, { name: 'edge' })
 
@@ -66,5 +98,19 @@ test('proxy: OWS-only Forwarded array parts do not create empty list members', (
   )
 
   t.equal(headers.forwarded, 'for=192.0.2.1, by=192.0.2.10;for=192.0.2.20;proto=http')
+  t.end()
+})
+
+test('proxy: OWS detection preserves non-string response values', (t) => {
+  const via = {
+    length: 1,
+    toString() {
+      return 'HTTP/1.1 mock'
+    },
+  }
+
+  const headers = responseHeaders({ via })
+
+  t.equal(headers.via, via)
   t.end()
 })

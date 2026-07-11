@@ -401,4 +401,4 @@ export class SqliteCacheStore implements CacheStore {
   readonly maxEntryTTL: number | undefined
 }
 
-export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from '@nxtedition/undici'
+export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici-types'

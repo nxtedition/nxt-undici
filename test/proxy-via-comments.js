@@ -44,6 +44,12 @@ test('proxy: a Via received-by lookalike inside a comment is not a loop', async 
   t.equal(headers.via, '1.1 upstream (outer (note, 1.1 edge , tail)), HTTP/1.1 edge')
 })
 
+test('proxy: quoted-pair parentheses keep a Via comma inside its comment', async (t) => {
+  const headers = await responseWithVia('1.1 upstream (note\\) still comment, 1.1 edge)', 'edge')
+
+  t.equal(headers.via, '1.1 upstream (note\\) still comment, 1.1 edge), HTTP/1.1 edge')
+})
+
 test('proxy: a genuine Via loop is found before a comma-bearing comment', async (t) => {
   await t.rejects(responseWithVia('1.1 edge (note, other proxy)', 'edge'), { statusCode: 508 })
 })

@@ -214,3 +214,67 @@ test('response error replaces incomplete inner response metadata', async (t) => 
   t.strictSame(err.res, { statusCode: 503, headers, trailers: null })
   t.equal(err.req.origin, 'http://example.test', 'decorates request metadata')
 })
+
+test('response error replaces an invalid status with inner response metadata', async (t) => {
+  const response = { statusCode: 503, headers: {}, trailers: null }
+  const innerError = Object.assign(new Error('terminal response failed'), {
+    statusCode: Number.NaN,
+    res: response,
+  })
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err.statusCode, 503, 'uses the finite response metadata status')
+  t.equal(err.res, response, 'keeps the inner response metadata object intact')
+})
+
+test('response error ignores an invalid top-level status', async (t) => {
+  const headers = { 'x-attempt': 'captured' }
+  const innerError = Object.assign(new Error('response interrupted'), { statusCode: '503' })
+  const dispatch = compose((opts, handler) => {
+    handler.onConnect(() => {})
+    handler.onHeaders(503, headers, () => {})
+    handler.onError(innerError)
+  }, interceptors.responseError())
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+      },
+      {
+        onConnect() {},
+        onHeaders() {},
+        onData() {},
+        onComplete() {},
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err.statusCode, 503, 'falls back to the captured numeric status')
+  t.equal(err.res.headers, headers, 'keeps metadata captured for that status')
+})

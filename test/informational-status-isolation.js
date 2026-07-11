@@ -55,6 +55,10 @@ test('log does not report Early Hints as the terminal response', async (t) => {
 
   t.equal(received, failure, 'forwards the original transport error')
   t.strictSame(statuses, [103], 'still forwards the informational response')
+  t.ok(failed, 'emits a terminal failure log')
+  if (failed == null) {
+    return
+  }
   t.equal(failed.ures.statusCode, undefined, 'does not log 103 as a terminal status')
   t.equal(failed.ures.headers, undefined, 'does not log Early Hints as terminal headers')
   t.equal(failed.ures.timing.headers, -1, 'does not record terminal-header timing for 1xx')

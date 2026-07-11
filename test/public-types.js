@@ -9,11 +9,6 @@ const require = createRequire(import.meta.url)
 const tsc = require.resolve('typescript/bin/tsc')
 const testDirectory = dirname(fileURLToPath(import.meta.url))
 const root = resolve(testDirectory, '..')
-const undiciPackagePath = require.resolve('@nxtedition/undici/package.json')
-const undiciPackage = require(undiciPackagePath)
-const undiciTypes = undiciPackage.types ?? undiciPackage.typings
-const needsUndiciTypeStub =
-  typeof undiciTypes !== 'string' || !existsSync(resolve(dirname(undiciPackagePath), undiciTypes))
 
 function findTypeScriptFiles(directory) {
   if (!existsSync(directory)) {
@@ -37,11 +32,7 @@ function findTypeScriptFiles(directory) {
     })
 }
 
-const inputs = [
-  ...(needsUndiciTypeStub ? [join(root, 'test/type-stubs/upstream-undici.d.ts')] : []),
-  join(root, 'lib/index.d.ts'),
-  ...findTypeScriptFiles(join(root, 'type-tests')),
-]
+const inputs = [join(root, 'lib/index.d.ts'), ...findTypeScriptFiles(join(root, 'type-tests'))]
 
 test('public declarations compile', (t) => {
   execFileSync(

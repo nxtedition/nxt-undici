@@ -25,5 +25,7 @@ test('parseHeaders rejects malformed or mixed pair arrays', (t) => {
   t.throws(() => parseHeaders([['x-name']]), expected)
   t.throws(() => parseHeaders([['x-name', 'value', 'extra']]), expected)
   t.throws(() => parseHeaders([['x-name', 'value'], 'x-other']), expected)
+  t.throws(() => parseHeaders(['x-name', 'value', ['x-other', 'other']]), expected)
+  t.throws(() => parseHeaders(['x-name', 'value', ['x-other', 'other'], 'value']), expected)
   t.end()
 })

@@ -2,11 +2,16 @@ import { getEventListeners } from 'node:events'
 import { test } from 'tap'
 import { RequestHandler, request } from '../lib/request.js'
 
-test('AbortSignal reaches transport past stopImmediatePropagation', async (t) => {
+test('cross-realm AbortSignal reaches transport past stopImmediatePropagation', async (t) => {
   const controller = new AbortController()
+  const foreignPrototype = Object.create(EventTarget.prototype)
+  Object.defineProperties(foreignPrototype, Object.getOwnPropertyDescriptors(AbortSignal.prototype))
+  Object.setPrototypeOf(controller.signal, foreignPrototype)
+
   const reason = new Error('user abort')
   let transportReason
 
+  t.notOk(controller.signal instanceof AbortSignal, 'signal has a foreign-realm prototype')
   controller.signal.addEventListener('abort', (event) => event.stopImmediatePropagation())
 
   const result = request(

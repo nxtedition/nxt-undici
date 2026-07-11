@@ -231,7 +231,10 @@ test('trace-dns: concurrent refresh triggers emit one doc per lookup', async (t)
     dns: { ttl: 30_000, lookup },
     dispatcher,
   })
-  await new Promise((resolve) => setImmediate(resolve))
+  const releaseDeadline = Date.now() + 1000
+  while (release == null && Date.now() < releaseDeadline) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
   t.type(release, 'function', 'refresh lookup started')
   release?.()
   for (const p of await Promise.all([pa, pb])) {

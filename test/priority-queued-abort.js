@@ -122,3 +122,41 @@ test('priority: EventEmitter signal cancels queued work before admission', async
     signal.emit('abort')
   })
 })
+
+test('priority: reentrant queue tracing cannot install a stale abort listener', (t) => {
+  const signal = Object.assign(new EventEmitter(), { aborted: false, reason: undefined })
+  let releaseFirst
+  let calls = 0
+  let completed = false
+  const dispatch = priority()((opts, wrapped) => {
+    calls++
+    if (calls === 1) {
+      releaseFirst = () => wrapped.onConnect(() => {})
+      return
+    }
+    wrapped.onConnect(() => {})
+    wrapped.onComplete({})
+  })
+
+  dispatch({ ...base, path: '/hold' }, handler())
+  const trace = {
+    write(doc, op) {
+      if (op === 'undici:priority' && doc.phase === 'queued') {
+        releaseFirst()
+      }
+    },
+  }
+  dispatch(
+    { ...base, path: '/queued', signal, trace },
+    handler({
+      onComplete() {
+        completed = true
+      },
+    }),
+  )
+
+  t.equal(calls, 2, 'the queued request was admitted reentrantly by its trace writer')
+  t.equal(completed, true)
+  t.equal(signal.listenerCount('abort'), 0, 'no queued-only listener is installed after admission')
+  t.end()
+})

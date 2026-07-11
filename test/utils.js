@@ -216,10 +216,14 @@ test('bodyLength - blob returns size', (t) => {
 
 // --- isDisturbed ---
 
-test('isDisturbed - null/string/buffer/function returns false', (t) => {
+test('isDisturbed - non-stream bodies return false', (t) => {
   t.notOk(isDisturbed(null))
   t.notOk(isDisturbed('string'))
   t.notOk(isDisturbed(Buffer.from('hello')))
+  t.notOk(isDisturbed(new Uint8Array(1)))
+  t.notOk(isDisturbed(new Blob(['hello'])))
+  t.notOk(isDisturbed({}))
+  t.notOk(isDisturbed(42))
   t.notOk(isDisturbed(() => {}))
   t.end()
 })

@@ -202,17 +202,18 @@ export interface PressureInterceptorOptions {
   trace?: TraceWriter | null
   /** Sampling interval for the internal EWMA loop, in ms (default 200).
    *  Set to 0 to disable the internal timer and drive sampling yourself via
-   *  `sample()` from a loop you already run. */
+   *  `sample()` from a loop you already run. Must be finite and within Node's
+   *  timer range: 0 through 2^31 - 1. */
   sampleInterval?: number
-  /** EWMA time-constant in ms — the smoothing/desensitizing window (default 10000). */
+  /** Positive finite EWMA time-constant in ms — the smoothing/desensitizing window (default 10000). */
   tau?: number
-  /** Schmitt-trigger dead-band for `some` (shed discretionary work). */
+  /** Schmitt-trigger dead-band for `some`; must satisfy `0 < someLo < someHi < 1`. */
   someHi?: number
   someLo?: number
-  /** Schmitt-trigger dead-band for `full` (pause the producer). */
+  /** Schmitt-trigger dead-band for `full`; must satisfy `0 < fullLo < fullHi < 1`. */
   fullHi?: number
   fullLo?: number
-  /** Schmitt-trigger dead-band for `errorRate` (mark the origin degraded). */
+  /** Schmitt-trigger dead-band for `errorRate`; must satisfy `0 < errLo < errHi < 1`. */
   errHi?: number
   errLo?: number
 }

@@ -7,6 +7,7 @@ import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
+import { makeKey } from '../lib/interceptor/cache/store.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
@@ -71,7 +72,7 @@ test('cache: immutable does not override explicit max-age (expires on schedule)'
   // Expiry-on-schedule is asserted from the stored entry instead of sleeping
   // past the TTL: max-age bounds the freshness lifetime, immutable does not
   // extend it.
-  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  const entry = store.get(makeKey(opts))
   t.equal(entry.staleAt - entry.cachedAt, 5000, 'freshness is max-age, not immutable')
 })
 
@@ -103,7 +104,7 @@ test('cache: immutable alone is not cached (immutable is not a freshness source)
   // response has no freshness and is not stored — the origin is hit each time.
   t.equal(hits, 2, 'immutable without a lifetime is not cached')
 
-  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  const entry = store.get(makeKey(opts))
   t.equal(entry, undefined, 'nothing stored for immutable-only')
 })
 
@@ -132,7 +133,7 @@ test('cache: explicit s-maxage wins over immutable', async (t) => {
   await rawRequest(dispatch, opts)
   t.equal(hits, 1, 'served from cache within the s-maxage window')
 
-  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  const entry = store.get(makeKey(opts))
   t.equal(
     entry.staleAt - entry.cachedAt,
     60 * 1000,

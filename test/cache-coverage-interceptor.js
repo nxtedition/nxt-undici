@@ -708,15 +708,15 @@ test('cache: unparseable Location header is skipped during invalidation', async 
   t.equal(docs[0].err, null)
 })
 
-test('cache: invalidation trace doc tolerates a key without a method', async (t) => {
-  // A custom dispatch fn (the interceptor contract) doesn't require
-  // opts.method the way the real Agent does — the trace tagging must not
-  // assume it is present.
+test('cache: standalone interceptor defaults a missing method', async (t) => {
   const writer = makeWriter()
   const store = makeRecordingStore()
+  let dispatchedMethod
   const wrapped = interceptors.cache()((opts, handler) => {
+    dispatchedMethod = opts.method
     handler.onConnect(() => {})
-    handler.onHeaders(204, {}, () => {})
+    handler.onHeaders(200, { 'cache-control': 'max-age=60' }, () => {})
+    handler.onData(Buffer.from('ok'))
     handler.onComplete([])
     return true
   })
@@ -732,13 +732,37 @@ test('cache: invalidation trace doc tolerates a key without a method', async (t)
     makeInnerHandler(),
   )
 
-  t.equal(store.deletes.length, 1, 'target URI invalidated')
-  const docs = writer.docs.filter((doc) => doc.op === 'undici:cache-invalidate')
-  t.equal(docs.length, 1)
-  t.equal(docs[0].method, null, 'absent method tagged as null')
-  t.equal(docs[0].url, 'http://fake-origin/x')
-  t.equal(docs[0].paths, 1)
-  t.equal(docs[0].err, null)
+  t.equal(dispatchedMethod, 'GET', 'bodyless dispatch defaults to GET')
+  t.equal(store.deletes.length, 0, 'default GET does not invalidate')
+  t.equal(store.sets.length, 1, 'default GET response is stored')
+  t.equal(store.sets[0].key.method, 'GET', 'stored key uses the default')
+  const lookup = writer.docs.find((doc) => doc.op === 'undici:cache')
+  t.equal(lookup.method, 'GET', 'trace uses the default')
+
+  const postStore = makeRecordingStore()
+  let dispatchedPostMethod
+  const wrappedPost = interceptors.cache()((opts, handler) => {
+    dispatchedPostMethod = opts.method
+    handler.onConnect(() => {})
+    handler.onHeaders(204, {}, () => {})
+    handler.onComplete([])
+    return true
+  })
+
+  wrappedPost(
+    {
+      origin: 'http://fake-origin',
+      path: '/x',
+      body: 'payload',
+      headers: {},
+      cache: { store: postStore },
+    },
+    makeInnerHandler(),
+  )
+
+  t.equal(dispatchedPostMethod, 'POST', 'body-bearing dispatch defaults to POST')
+  t.equal(postStore.deletes.length, 1, 'default POST invalidates')
+  t.equal(postStore.deletes[0].method, 'POST', 'invalidation key uses the default')
 })
 
 // ---------------------------------------------------------------------------

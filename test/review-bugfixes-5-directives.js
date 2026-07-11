@@ -37,6 +37,7 @@ import {
   forbidsRequestDrivenStale,
 } from '../lib/interceptor/cache/freshness.js'
 import { CacheHandler } from '../lib/interceptor/cache/cache-handler.js'
+import { makeKey } from '../lib/interceptor/cache/store.js'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
 import undici from '@nxtedition/undici'
 
@@ -264,7 +265,7 @@ test('authorization permission requires syntactically valid response directives'
     await rawRequest(makeDispatch(), opts)
     await new Promise((resolve) => setImmediate(resolve))
     t.equal(
-      store.get(undici.util.cache.makeCacheKey(opts)),
+      store.get(makeKey(opts)),
       undefined,
       `${cacheControl}: authenticated response was not shared`,
     )

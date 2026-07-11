@@ -12,6 +12,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { interceptors, compose, cache as cacheModule } from '../lib/index.js'
 import { parseHttpDate } from '../lib/utils.js'
+import { makeKey } from '../lib/interceptor/cache/store.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
@@ -108,7 +109,7 @@ test('storability: a missing Date is appended at receipt before forwarding and s
   )
 
   await flush()
-  const entry = store.get(undici.util.cache.makeCacheKey(opts))
+  const entry = store.get(makeKey(opts))
   t.equal(entry.headers.date, first.headers.date, 'the same generated Date is stored')
 
   const second = await rawRequest(dispatch, opts)

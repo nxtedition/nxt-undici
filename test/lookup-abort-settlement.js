@@ -115,7 +115,7 @@ test('lookup: successful settlement removes its abort listener', async (t) => {
         completed++
       },
       onError(err) {
-        t.threw(err)
+        t.fail(`unexpected lookup error: ${err}`)
       },
     },
   )

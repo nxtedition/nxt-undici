@@ -96,3 +96,30 @@ test('completed factory body removes its request abort listener', async (t) => {
   t.equal(Buffer.concat(chunks).toString(), 'complete')
   t.equal(signal.listenerCount('abort'), 0, 'removes the listener when the body ends')
 })
+
+test('body factory supports EventEmitter-like signals with on/off', async (t) => {
+  const listeners = new Set()
+  const signal = {
+    aborted: false,
+    reason: undefined,
+    on(event, listener) {
+      t.equal(event, 'abort')
+      listeners.add(listener)
+    },
+    off(event, listener) {
+      t.equal(event, 'abort')
+      listeners.delete(listener)
+    },
+  }
+  let body
+  const dispatch = interceptors.requestBodyFactory()((opts) => {
+    body = opts.body
+  })
+
+  t.doesNotThrow(() => dispatch({ body: () => 'complete', signal }, {}))
+  t.equal(listeners.size, 1, 'subscribes through on()')
+
+  await body.toArray()
+
+  t.equal(listeners.size, 0, 'unsubscribes through off()')
+})

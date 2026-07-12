@@ -241,13 +241,17 @@ async function main() {
     }
   }
 
-  const unexpectedFailures = stats.failed.filter(([id]) => !(id in knownFailures))
-  const expectedFailures = stats.failed.filter(([id]) => id in knownFailures)
-  const unexpectedSetup = stats.setup.filter(([id]) => !(id in knownSetupFailures))
+  // Own-property lookups, not `in`: these baselines are JSON.parse'd plain
+  // objects that inherit Object.prototype, so `'toString' in known…` (or a
+  // test literally named `constructor`) would spuriously read as baselined.
+  const isKnown = (obj, id) => Object.hasOwn(obj, id)
+  const unexpectedFailures = stats.failed.filter(([id]) => !isKnown(knownFailures, id))
+  const expectedFailures = stats.failed.filter(([id]) => isKnown(knownFailures, id))
+  const unexpectedSetup = stats.setup.filter(([id]) => !isKnown(knownSetupFailures, id))
   // Only a genuine pass makes a known-failure entry stale — a setup/harness
   // failure or retry is not "now passing".
   const passedSet = new Set(stats.passed)
-  const unexpectedRetries = stats.retried.filter(([id]) => !(id in knownRetries))
+  const unexpectedRetries = stats.retried.filter(([id]) => !isKnown(knownRetries, id))
   const staleKnown = [
     ...Object.keys(knownFailures),
     ...Object.keys(knownSetupFailures),
@@ -365,6 +369,16 @@ async function main() {
   // is empty on --suite/--id runs (see isFullRun), so this never mis-fires.
   if (regressedPasses.length) {
     print(`\n${regressedPasses.length} optimal/check pass-ratchet regression(s).`)
+    process.exitCode = 1
+  }
+  // Fail fast when the ratchet has nothing to enforce on a full CI run: a
+  // missing pass-baseline.json (or one lacking this environment's key) silently
+  // disables regression coverage — the exact failure this harness guards
+  // against. Regenerate with `--emit-pass-baseline` (per environment).
+  if (args.ci && isFullRun && passBaseline.length === 0) {
+    print(
+      `\npass-baseline.json is missing or has no "${envKey}" entries — the pass-ratchet is disabled. Regenerate it with --emit-pass-baseline.`,
+    )
     process.exitCode = 1
   }
 }

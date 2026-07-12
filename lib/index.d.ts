@@ -1,5 +1,4 @@
 import type { Readable } from 'node:stream'
-import type { EventEmitter } from 'node:events'
 import type { Priority } from '@nxtedition/scheduler'
 
 export interface URLObject {
@@ -37,10 +36,35 @@ export type HeaderInput =
   | (Buffer | string | (Buffer | string)[])[]
   | readonly HeaderPair[]
 export type OriginLike = URLLike | readonly URLLike[]
-export type RequestSignal = AbortSignal | EventEmitter
+
+interface AbortSignalState {
+  readonly aborted?: boolean
+  readonly reason?: unknown
+}
+
+type AbortSignalLike = AbortSignalState &
+  (
+    | {
+        addEventListener(type: 'abort', listener: () => void): unknown
+        removeEventListener(type: 'abort', listener: () => void): unknown
+      }
+    | {
+        on(type: 'abort', listener: () => void): unknown
+        off(type: 'abort', listener: () => void): unknown
+      }
+    | {
+        on(type: 'abort', listener: () => void): unknown
+        removeListener(type: 'abort', listener: () => void): unknown
+      }
+  )
+
+export type RequestSignal = AbortSignal | AbortSignalLike
 
 export interface Dispatcher {
-  dispatch(opts: DispatchOptions, handler: DispatchHandler): void
+  dispatch(
+    opts: import('@nxtedition/undici').Dispatcher.DispatchOptions,
+    handler: import('@nxtedition/undici').Dispatcher.DispatchHandler,
+  ): boolean | void | Promise<boolean | void>
 }
 
 export interface DispatchHandler {
@@ -434,4 +458,4 @@ export class SqliteCacheStore implements CacheStore {
   readonly maxEntryTTL: number | undefined
 }
 
-export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici-types'
+export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from '@nxtedition/undici'

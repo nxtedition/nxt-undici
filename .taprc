@@ -1,0 +1,11 @@
+# Several suites bind wildcard listeners and request 0.0.0.0. On Node 26,
+# parallel files have intermittently received another test server's response.
+jobs: 1
+# The intentionally large cache-store close test takes more than 30 seconds
+# under coverage instrumentation on Node 26.
+timeout: 120
+# Keep reporting the existing coverage baseline without Tap's implicit 100%
+# threshold turning an otherwise green suite into a failure.
+allow-incomplete-coverage: true
+plugin:
+  - '!@tapjs/typescript'

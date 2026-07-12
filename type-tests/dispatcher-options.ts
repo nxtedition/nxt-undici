@@ -1,13 +1,21 @@
-import type { Dispatcher, DispatchHandler } from '../lib/index.js'
+import type { Dispatcher as TransportDispatcher } from '@nxtedition/undici'
+import type { Dispatcher } from '../lib/index.js'
 
 declare const dispatcher: Dispatcher
-declare const handler: DispatchHandler
+declare const handler: TransportDispatcher.DispatchHandler
 
+dispatcher.dispatch({ origin: 'https://example.test', path: '/', method: 'GET' }, handler)
+
+// @ts-expect-error Raw transport dispatch requires a request path.
 dispatcher.dispatch({ origin: 'https://example.test', method: 'GET' }, handler)
-dispatcher.dispatch({ origin: 'https://example.test', dns: { ttl: 0, negativeTTL: 0 } }, handler)
 
-// @ts-expect-error Dispatcher options use the public DispatchOptions contract.
-dispatcher.dispatch({ unknownOption: true }, handler)
-
-// @ts-expect-error DNS TTL options are numeric.
-dispatcher.dispatch({ origin: 'https://example.test', dns: { ttl: '1000' } }, handler)
+dispatcher.dispatch(
+  {
+    origin: 'https://example.test',
+    path: '/',
+    method: 'GET',
+    // @ts-expect-error Higher-level interceptor options are consumed before transport dispatch.
+    dns: { ttl: 0 },
+  },
+  handler,
+)

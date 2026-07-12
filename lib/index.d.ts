@@ -114,9 +114,9 @@ export interface DispatchOptions {
    *  dispatch handler must implement onUpgrade — only meaningful with raw
    *  dispatch()/compose(); request() has no upgrade support (see RequestOptions). */
   upgrade?: string | null
-  follow?: number | FollowFn | boolean | null
+  follow?: FollowPolicy | null
   /** Alias for `follow`; ignored when `follow` is also set. */
-  redirect?: number | FollowFn | boolean | null
+  redirect?: FollowPolicy | null
   error?: boolean | null
   /** Alias for `error`; ignored when `error` is also set. */
   throwOnError?: boolean | null
@@ -153,7 +153,18 @@ export type RetryFn = (
   defaultRetryFn: () => Promise<boolean>,
 ) => boolean | Promise<boolean>
 
-export type FollowFn = (location: string, count: number, opts: DispatchOptions) => boolean
+export type FollowFn = (
+  this: DispatchOptions,
+  location: string,
+  count: number,
+  opts: DispatchOptions,
+) => boolean
+
+export interface FollowOptions {
+  readonly count: number
+}
+
+export type FollowPolicy = number | boolean | FollowOptions | FollowFn
 
 export type LookupFn = (
   origin: OriginLike,
@@ -166,6 +177,16 @@ export interface ProxyOptions {
   socket?: import('node:net').Socket
   name?: string
   req?: import('node:http').IncomingMessage
+  /** Parsed inbound target consumed by the public dispatch/request boundary.
+   *  Only pathname and search are used when reducing an absolute-form request
+   *  target to origin-form. */
+  requestTarget?: ProxyRequestTarget | null
+  /** Additional case-insensitive headers removed on cross-origin redirects. */
+  originBoundHeaders?: readonly string[] | null
+}
+
+export interface ProxyRequestTarget extends URLObject {
+  readonly pathname: string
 }
 
 export interface CacheOptions {

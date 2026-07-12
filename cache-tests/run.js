@@ -35,6 +35,7 @@ import { compose, interceptors, cache as cacheExports } from '../lib/index.js'
 import { createTestServer } from './engine/server.js'
 import { makeTest, rawRequest } from './engine/client.js'
 import { determineTestResult, resultTypes, testLookup } from './engine/lib/results.mjs'
+import { createTestIdRecord, getPassBaselineError, hasOwnTestId } from './runner-state.js'
 import suites from './tests/index.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -106,7 +107,8 @@ async function main() {
   // Pass-ratchet baseline: the optimal/check tests that currently pass, keyed
   // per environment (heuristic freshness unlocks a superset). A regression —
   // a baselined test no longer passing — gates CI; new passes only warn (add
-  // them via `--emit-pass-baseline`). Absent/empty baseline disables the gate.
+  // them via `--emit-pass-baseline`). Full CI rejects an absent or empty
+  // environment baseline before starting the suite.
   const envKey = args.heuristic ? 'heuristic' : 'default'
   let passBaselineAll = {}
   try {
@@ -115,6 +117,18 @@ async function main() {
     if (err.code !== 'ENOENT') throw err // malformed baseline must not pass silently
   }
   const passBaseline = passBaselineAll[envKey] ?? []
+  const isFullRun = !args.suite && args.id == null
+  const passBaselineError = getPassBaselineError({
+    ci: args.ci,
+    isFullRun,
+    passBaseline,
+    envKey,
+  })
+  if (passBaselineError !== null) {
+    console.error(`\n${passBaselineError}`)
+    process.exitCode = 1
+    return
+  }
 
   const serverHandle = createTestServer()
   const baseUrl = await serverHandle.listen()
@@ -128,7 +142,7 @@ async function main() {
   // Flatten, filter, run in chunks of CHUNK_SIZE concurrently (upstream
   // runSome). Each test is fully isolated by its uuid'd URL.
   const testArray = []
-  const skipped = {}
+  const skipped = createTestIdRecord()
   for (const suite of suitesToRun) {
     for (const test of suite.tests) {
       if (test.id === undefined) throw new Error('Missing test id')
@@ -152,13 +166,13 @@ async function main() {
     process.exit(2)
   }
 
-  const results = {}
+  const results = createTestIdRecord()
   for (let index = 0; index < testArray.length; index += CHUNK_SIZE) {
     const chunk = testArray.slice(index, index + CHUNK_SIZE)
     await Promise.all(
       chunk.map(async (test) => {
         const result = await makeTest(test, ctx)
-        if (test.id in results) throw new Error(`Duplicate test ${test.id}`)
+        if (hasOwnTestId(results, test.id)) throw new Error(`Duplicate test ${test.id}`)
         results[test.id] = result
       }),
     )
@@ -241,13 +255,13 @@ async function main() {
     }
   }
 
-  const unexpectedFailures = stats.failed.filter(([id]) => !(id in knownFailures))
-  const expectedFailures = stats.failed.filter(([id]) => id in knownFailures)
-  const unexpectedSetup = stats.setup.filter(([id]) => !(id in knownSetupFailures))
+  const unexpectedFailures = stats.failed.filter(([id]) => !hasOwnTestId(knownFailures, id))
+  const expectedFailures = stats.failed.filter(([id]) => hasOwnTestId(knownFailures, id))
+  const unexpectedSetup = stats.setup.filter(([id]) => !hasOwnTestId(knownSetupFailures, id))
   // Only a genuine pass makes a known-failure entry stale — a setup/harness
   // failure or retry is not "now passing".
   const passedSet = new Set(stats.passed)
-  const unexpectedRetries = stats.retried.filter(([id]) => !(id in knownRetries))
+  const unexpectedRetries = stats.retried.filter(([id]) => !hasOwnTestId(knownRetries, id))
   const staleKnown = [
     ...Object.keys(knownFailures),
     ...Object.keys(knownSetupFailures),
@@ -269,7 +283,6 @@ async function main() {
   }
   // The ratchet only makes sense against the full suite: a --suite/--id run
   // sees a subset, so every un-run baseline entry would read as a regression.
-  const isFullRun = !args.suite && args.id == null
   const ratchetSet = new Set(ratchetPasses)
   const regressedPasses = isFullRun ? passBaseline.filter((id) => !ratchetSet.has(id)) : []
   const newlyPassing = isFullRun ? ratchetPasses.filter((id) => !passBaseline.includes(id)) : []

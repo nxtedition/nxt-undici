@@ -18,15 +18,17 @@ node cache-tests/run.js --emit-pass-baseline              # regenerate pass-base
 node cache-tests/run.js --heuristic --emit-pass-baseline  # ...and [heuristic]
 ```
 
-A full `--ci` run exits 1 on any of: an unexpected required-kind failure, a
-harness failure, a zero-pass run, a `retried` verdict outside the baseline (a
-duplicate dispatch — this runner composes no retry interceptor, so a retry is a
-double-dispatch bug that also silently drops the test from verification), a
-setup failure outside the baseline, or a **pass-ratchet regression** (a
-previously passing `optimal`/`check` test that stopped passing). The last two
-gates need the full suite, so they are disabled on `--suite`/`--id` subset runs
-— only a full run is equivalent to CI. `test:cache-tests` runs the full gate in
-the default environment and then, if it passes, the `--heuristic` environment.
+A full `--ci` run exits 1 on any of: a missing or empty pass baseline for the
+current environment, an unexpected required-kind failure, a harness failure, a
+zero-pass run, a `retried` verdict outside the baseline (a duplicate dispatch —
+this runner composes no retry interceptor, so a retry is a double-dispatch bug
+that also silently drops the test from verification), a setup failure outside
+the baseline, or a **pass-ratchet regression** (a previously passing
+`optimal`/`check` test that stopped passing). The baseline-presence check happens
+before the suite starts. The setup-failure and pass-ratchet gates need the full
+suite, so they are disabled on `--suite`/`--id` subset runs — only a full run is
+equivalent to CI. `test:cache-tests` runs the full gate in the default
+environment and then, if it passes, the `--heuristic` environment.
 
 ## Layout
 
@@ -55,8 +57,9 @@ the default environment and then, if it passes, the `--heuristic` environment.
   entries that now pass.
 - `pass-baseline.json` — the pass-ratchet: the `optimal`/`check` tests that
   currently pass, keyed per environment (`default` / `heuristic`). CI fails if
-  any baselined test stops passing (a silent regression, e.g. RFC 5861 SWR
-  going non-conformant) and warns about new passes to add. Regenerate with
+  the current environment's baseline is missing or empty, or if any baselined
+  test stops passing (a silent regression, e.g. RFC 5861 SWR going
+  non-conformant), and warns about new passes to add. Regenerate with
   `--emit-pass-baseline` (once per environment).
 
 Vendored from upstream commit `b555b8d8d13950aaffa396689d38177b3de66bcf`

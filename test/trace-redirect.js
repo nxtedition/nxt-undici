@@ -1,7 +1,7 @@
 import { test } from 'tap'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { request, Agent } from '../lib/index.js'
+import { request, dispatch, Agent } from '../lib/index.js'
 
 async function startServer(handler) {
   const server = createServer(handler)
@@ -103,4 +103,47 @@ test('trace: 303 doc carries the post-rewrite GET method', async (t) => {
   t.equal(redirects[0].method, 'GET')
   t.ok(redirects[0].from.endsWith('/a'))
   t.ok(redirects[0].to.endsWith('/b'))
+})
+
+test('trace: redirect source keeps the request origin spelling', async (t) => {
+  const writer = makeWriter()
+  let attempt = 0
+  const dispatcher = {
+    dispatch(opts, handler) {
+      attempt++
+      handler.onConnect(() => {})
+      if (attempt === 1) {
+        handler.onHeaders(302, { location: '/b' }, () => {})
+      } else {
+        handler.onHeaders(200, {}, () => {})
+      }
+      handler.onComplete({})
+    },
+  }
+
+  await new Promise((resolve, reject) => {
+    Promise.resolve(
+      dispatch(
+        dispatcher,
+        {
+          origin: 'http://LOCALHOST:80',
+          path: '/a',
+          follow: 1,
+          dns: false,
+          trace: writer,
+        },
+        {
+          onConnect() {},
+          onHeaders() {},
+          onComplete: resolve,
+          onError: reject,
+        },
+      ),
+    ).catch(reject)
+  })
+
+  const start = writer.docs.find((doc) => doc.op === 'undici:request' && doc.phase === 'start')
+  const redirect = writer.docs.find((doc) => doc.op === 'undici:redirect')
+  t.equal(start.url, 'http://LOCALHOST:80/a')
+  t.equal(redirect.from, start.url)
 })

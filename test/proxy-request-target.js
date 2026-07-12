@@ -235,61 +235,66 @@ test('proxy target: cache and log observe the canonical path', async (t) => {
   t.equal(loggedPath, '/canonical?value=1')
 })
 
-test('proxy target: marker rejects an unsafe path introduced by redirect', async (t) => {
+test('proxy target: parsed metadata is not reapplied to redirect paths', async (t) => {
   const attempts = []
   const dispatcher = (opts, handler) => {
     attempts.push(opts.path)
     handler.onConnect(() => {})
-    handler.onHeaders(
-      302,
-      { location: 'http://configured.invalid//reintroduced-by-redirect' },
-      () => {},
-    )
+    if (attempts.length === 1) {
+      handler.onHeaders(
+        302,
+        { location: 'http://configured.invalid//redirect-generated/path' },
+        () => {},
+      )
+    } else {
+      handler.onHeaders(204, {}, () => {})
+    }
     handler.onComplete({})
     return true
   }
 
-  await t.rejects(
-    run(dispatcher, {
-      path: 'http://untrusted.invalid/start',
-      follow: 2,
-      proxy: {
-        requestTarget: { pathname: '/start', search: null },
-      },
-    }),
-    BAD_REQUEST,
-  )
-  t.same(attempts, ['/start'], 'the unsafe follow-up never reaches the dispatcher')
+  await run(dispatcher, {
+    path: 'http://untrusted.invalid/start',
+    follow: 2,
+    proxy: {
+      requestTarget: { pathname: '/start', search: null },
+    },
+  })
+
+  t.same(attempts, ['/start', '//redirect-generated/path'])
 })
 
-test('proxy target: marker rejects an unsafe path introduced by retry', async (t) => {
+test('proxy target: parsed metadata is not reapplied to retry mutations', async (t) => {
   const attempts = []
   let retryCalls = 0
   const dispatcher = (opts, handler) => {
     attempts.push(opts.path)
     handler.onConnect(() => {})
-    handler.onError(Object.assign(new Error('retry me'), { code: 'ECONNRESET' }))
+    if (attempts.length === 1) {
+      handler.onError(Object.assign(new Error('retry me'), { code: 'ECONNRESET' }))
+    } else {
+      handler.onHeaders(204, {}, () => {})
+      handler.onComplete({})
+    }
     return true
   }
 
-  await t.rejects(
-    run(dispatcher, {
-      path: 'http://untrusted.invalid/start',
-      proxy: {
-        requestTarget: { pathname: '/start', search: null },
-      },
-      retry(err, retryCount, opts) {
-        retryCalls++
-        t.equal(err.code, 'ECONNRESET')
-        t.equal(retryCount, 0)
-        t.equal(opts.path, '/start')
-        t.notOk(Object.hasOwn(opts.proxy, 'requestTarget'))
-        opts.path = 'http://untrusted.invalid/reintroduced-by-retry'
-        return true
-      },
-    }),
-    BAD_REQUEST,
-  )
+  await run(dispatcher, {
+    path: 'http://untrusted.invalid/start',
+    proxy: {
+      requestTarget: { pathname: '/start', search: null },
+    },
+    retry(err, retryCount, opts) {
+      retryCalls++
+      t.equal(err.code, 'ECONNRESET')
+      t.equal(retryCount, 0)
+      t.equal(opts.path, '/start')
+      t.notOk(Object.hasOwn(opts.proxy, 'requestTarget'))
+      opts.path = '/retry-generated/path'
+      return true
+    },
+  })
+
   t.equal(retryCalls, 1)
-  t.same(attempts, ['/start'], 'the unsafe retry never reaches the dispatcher')
+  t.same(attempts, ['/start', '/retry-generated/path'])
 })

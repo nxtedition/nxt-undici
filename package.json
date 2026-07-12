@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/nxt-undici",
-  "version": "8.0.2",
+  "version": "8.0.3",
   "license": "MIT",
   "author": "Robert Nagy <robert.nagy@boffins.se>",
   "main": "lib/index.js",
@@ -39,9 +39,10 @@
     "prepare": "husky",
     "prepublishOnly": "pinst --disable",
     "postpublish": "pinst --enable",
-    "test": "tap test",
+    "test": "tap build && tap test && yarn test:types",
     "test:cache-tests": "node cache-tests/run.js --ci && node cache-tests/run.js --ci --heuristic",
-    "test:coverage": "tap test --coverage-report=text --coverage-report=html"
+    "test:coverage": "tap build && tap test --coverage-report=text --coverage-report=html && yarn test:types",
+    "test:types": "tsc -p tsconfig.type-tests.json"
   },
   "lint-staged": {
     "*.{js,jsx}": [

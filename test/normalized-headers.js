@@ -130,6 +130,7 @@ test('functional retry invalidates headers before user code', async (t) => {
         headers,
         retry(err, retryCount, opts) {
           called = true
+          t.equal(this, opts, 'retry callbacks receive the live options as their receiver')
           opts.headers['Mixed-Case'] = 2
           const reparsed = parseHeaders(opts.headers)
           t.not(reparsed, opts.headers)

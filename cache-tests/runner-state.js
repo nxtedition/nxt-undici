@@ -6,6 +6,18 @@ export function hasOwnTestId(record, id) {
   return Object.hasOwn(record, id)
 }
 
+export function selectPassBaseline(passBaselineAll, envKey) {
+  if (
+    typeof passBaselineAll !== 'object' ||
+    passBaselineAll === null ||
+    Array.isArray(passBaselineAll)
+  ) {
+    throw new TypeError('pass-baseline.json must contain an object.')
+  }
+
+  return Object.hasOwn(passBaselineAll, envKey) ? passBaselineAll[envKey] : []
+}
+
 export function getPassBaselineError({ ci, isFullRun, passBaseline, envKey }) {
   if (!Array.isArray(passBaseline)) {
     return `pass-baseline.json["${envKey}"] must be an array.`

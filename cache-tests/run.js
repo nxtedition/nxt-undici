@@ -35,7 +35,12 @@ import { compose, interceptors, cache as cacheExports } from '../lib/index.js'
 import { createTestServer } from './engine/server.js'
 import { makeTest, rawRequest } from './engine/client.js'
 import { determineTestResult, resultTypes, testLookup } from './engine/lib/results.mjs'
-import { createTestIdRecord, getPassBaselineError, hasOwnTestId } from './runner-state.js'
+import {
+  createTestIdRecord,
+  getPassBaselineError,
+  hasOwnTestId,
+  selectPassBaseline,
+} from './runner-state.js'
 import suites from './tests/index.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -116,7 +121,7 @@ async function main() {
   } catch (err) {
     if (err.code !== 'ENOENT') throw err // malformed baseline must not pass silently
   }
-  const passBaseline = passBaselineAll[envKey] ?? []
+  const passBaseline = selectPassBaseline(passBaselineAll, envKey)
   const isFullRun = !args.suite && args.id == null
   const passBaselineError = getPassBaselineError({
     ci: args.ci,

@@ -3,6 +3,7 @@ import {
   createTestIdRecord,
   getPassBaselineError,
   hasOwnTestId,
+  selectPassBaseline,
 } from '../cache-tests/runner-state.js'
 
 const prototypeIds = ['__proto__', 'constructor', 'hasOwnProperty', 'toString', 'valueOf']
@@ -65,5 +66,33 @@ test('full CI requires a populated pass baseline', (t) => {
     getPassBaselineError({ ...fullCi, passBaseline: {} }),
     'pass-baseline.json["default"] must be an array.',
   )
+  t.equal(
+    getPassBaselineError({ ...fullCi, passBaseline: null }),
+    'pass-baseline.json["default"] must be an array.',
+  )
+  t.end()
+})
+
+test('pass baseline selection distinguishes missing and malformed shapes', (t) => {
+  const baseline = ['passing-test']
+
+  t.strictSame(selectPassBaseline({}, 'default'), [], 'a missing environment is empty')
+  t.equal(selectPassBaseline({ default: baseline }, 'default'), baseline)
+  t.equal(
+    selectPassBaseline({ default: null }, 'default'),
+    null,
+    'an explicit null remains malformed instead of becoming empty',
+  )
+
+  for (const malformed of [null, [], 'baseline', 1, true]) {
+    t.throws(
+      () => selectPassBaseline(malformed, 'default'),
+      {
+        name: 'TypeError',
+        message: 'pass-baseline.json must contain an object.',
+      },
+      `${JSON.stringify(malformed)} is not a top-level baseline object`,
+    )
+  }
   t.end()
 })

@@ -100,8 +100,8 @@ export interface LoggerLike {
  *  is enabled and null while disabled (it flips between the two at runtime).
  *  The per-thread fallback writer lives in the Symbol.for('@nxtedition/app/trace')
  *  slot and must be installed via the package's installTrace(). */
-export type { TraceWriter } from '@nxtedition/trace'
-import type { TraceWriter } from '@nxtedition/trace'
+export type { TraceWriter } from '@nxtedition/trace/core'
+import type { TraceWriter } from '@nxtedition/trace/core'
 
 export type BodyFactoryResult =
   Readable | ArrayBuffer | ArrayBufferView | string | Iterable<unknown> | AsyncIterable<unknown>
@@ -148,7 +148,7 @@ export interface DispatchOptions {
   logger?: LoggerLike | null
   userAgent?: string | null
   /** Per-request trace writer: undefined falls back to the per-thread writer
-   *  installed via @nxtedition/trace's installTrace(), null disables tracing
+   *  installed via @nxtedition/trace/core's installTrace(), null disables tracing
    *  for this request. */
   trace?: TraceWriter | null
   dns?: DnsOptions | boolean | null

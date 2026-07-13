@@ -1,4 +1,4 @@
-import type { TraceWriter } from '@nxtedition/trace'
+import type { TraceWriter } from '@nxtedition/trace/core'
 import {
   installTrace,
   traceErr,

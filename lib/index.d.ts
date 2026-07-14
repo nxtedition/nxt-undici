@@ -322,6 +322,53 @@ export interface PressureInterceptor {
   [Symbol.dispose](): void
 }
 
+export interface SqliteCacheStoreStats {
+  gets: number
+  hits: number
+  sets: number
+  writes: number
+  deletes: number
+  flushes: number
+  gcs: number
+  clears: number
+  evictions: number
+  errors: number
+  pending: number
+  hitRate: number
+  /** Allocated SQLite pages in bytes, including freelist pages. */
+  size: number
+  /** Allocated non-freelist SQLite pages in bytes. */
+  usedSize: number
+  maxSize: number
+  closed: boolean
+}
+
+export interface CacheStats {
+  hits: number
+  misses: number
+  /** Background plus foreground validation attempts. */
+  revalidations: number
+  /** Cache-configured requests that cannot use the lookup path. */
+  bypasses: number
+  /** `hits / (hits + misses)`; zero before the first lookup. */
+  hitRate: number
+  store?: Omit<SqliteCacheStoreStats, 'closed'> & { stores: number }
+}
+
+export interface CacheInterceptorOptions {
+  origins?: Array<string | RegExp>
+}
+
+export interface CacheInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  stats(): CacheStats
+}
+
+export interface GlobalDispatcherStats {
+  cache: CacheStats
+  pressure: Array<PressureStats & { origin: string }>
+}
+
 export interface CacheKey {
   origin: string
   method: string
@@ -374,6 +421,7 @@ export interface CacheStore {
   gc(): void
   clear(): void
   close(): void
+  readonly stats?: Partial<SqliteCacheStoreStats>
 }
 
 /** `upgrade` is omitted: request()'s internal handler has no onUpgrade, so any
@@ -408,6 +456,11 @@ export function compose(
   ...interceptors: (Interceptor | null | undefined)[]
 ): DispatchFn
 
+/** Aggregate cache and pressure snapshots for every live dispatcher wrapped
+ * by this module in the current thread. Also exposed through the global
+ * `Symbol.for('@nxtedition/nxt-undici/dispatcher-stats')` provider. */
+export function getGlobalDispatcherStats(): GlobalDispatcherStats
+
 export function parseHeaders(headers?: HeaderInput | null): Record<string, string | string[]>
 
 export const interceptors: {
@@ -419,7 +472,7 @@ export const interceptors: {
   log: (opts?: LogInterceptorOptions) => Interceptor
   redirect: () => Interceptor
   proxy: () => Interceptor
-  cache: () => Interceptor
+  cache: (opts?: CacheInterceptorOptions) => CacheInterceptor
   requestId: () => Interceptor
   dns: () => Interceptor
   lookup: () => Interceptor
@@ -456,6 +509,7 @@ export class SqliteCacheStore implements CacheStore {
   close(): void
   readonly maxEntrySize: number | undefined
   readonly maxEntryTTL: number | undefined
+  readonly stats: SqliteCacheStoreStats
 }
 
 export { Client, Pool, Agent, getGlobalDispatcher, setGlobalDispatcher } from '@nxtedition/undici'

@@ -6,6 +6,8 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
+const versionedDb = (location) => `${location}.v14`
+
 function makeKey(overrides = {}) {
   return { origin: 'https://example.com', method: 'GET', path: '/test', ...overrides }
 }
@@ -105,7 +107,7 @@ test('close() persists a large batch that exceeds one flush time slice', (t) => 
   t.teardown(() => {
     for (const ext of ['', '-wal', '-shm']) {
       try {
-        fs.unlinkSync(dbPath + ext)
+        fs.unlinkSync(versionedDb(dbPath) + ext)
       } catch {}
     }
   })

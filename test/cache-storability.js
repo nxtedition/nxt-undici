@@ -16,6 +16,7 @@ import { makeKey } from '../lib/interceptor/cache/store.js'
 import undici from '@nxtedition/undici'
 
 const { SqliteCacheStore } = cacheModule
+const versionedDb = (location) => `${location}.v14`
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -795,9 +796,9 @@ test('store: re-caching a key supersedes the old row instead of accumulating', a
   const store = new SqliteCacheStore({ location: dbPath })
   t.teardown(() => {
     store.close()
-    fs.rmSync(dbPath, { force: true })
-    fs.rmSync(`${dbPath}-wal`, { force: true })
-    fs.rmSync(`${dbPath}-shm`, { force: true })
+    for (const ext of ['', '-wal', '-shm']) {
+      fs.rmSync(versionedDb(dbPath) + ext, { force: true })
+    }
   })
 
   const key = { origin: 'https://example.com', method: 'GET', path: '/hot' }
@@ -822,7 +823,7 @@ test('store: re-caching a key supersedes the old row instead of accumulating', a
 
   t.equal(store.get(key).body.toString(), 'three', 'newest entry served')
 
-  const db = new DatabaseSync(dbPath, { readOnly: true })
+  const db = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   const { c } = db
     .prepare(`SELECT COUNT(*) c FROM cacheInterceptorV14 WHERE url = ?`)
     .get('https://example.com/hot')

@@ -5,6 +5,8 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
+const versionedDb = (location) => `${location}.v14`
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1026,7 +1028,7 @@ test('file-based store persists data across instances', (t) => {
   t.teardown(() => {
     for (const ext of ['', '-wal', '-shm']) {
       try {
-        fs.unlinkSync(dbPath + ext)
+        fs.unlinkSync(versionedDb(dbPath) + ext)
       } catch {}
     }
   })
@@ -1052,7 +1054,7 @@ test('close() flushes pending items before closing the DB', (t) => {
   t.teardown(() => {
     for (const ext of ['', '-wal', '-shm']) {
       try {
-        fs.unlinkSync(dbPath + ext)
+        fs.unlinkSync(versionedDb(dbPath) + ext)
       } catch {}
     }
   })

@@ -18,6 +18,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { DatabaseSync, StatementSync } from 'node:sqlite'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
+const versionedDb = (location) => `${location}.v14`
+
 function makeKey(overrides = {}) {
   return { origin: 'https://example.com', method: 'GET', path: '/test', ...overrides }
 }
@@ -85,7 +87,7 @@ test('delete() warns instead of throwing when the database is locked', async (t)
 
   // A second connection holding the write lock makes the store's DELETE hit
   // SQLITE_BUSY once its 5ms busy timeout expires.
-  const locker = new DatabaseSync(dbPath)
+  const locker = new DatabaseSync(versionedDb(dbPath))
   locker.exec('PRAGMA busy_timeout = 5')
   locker.exec('BEGIN IMMEDIATE')
   t.teardown(() => {

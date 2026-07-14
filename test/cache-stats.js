@@ -201,6 +201,44 @@ test('wrapped dispatcher stats globally include every interceptor snapshot', asy
     pending: 0,
   })
   t.match(stats.lookup, { lookups: 2, errors: 0, pending: 0 })
+  t.same(stats.retry, {
+    retries: 0,
+    headerRetries: 0,
+    bodyRetries: 0,
+    recovered: 0,
+    failed: 0,
+    aborted: 0,
+    pending: 0,
+  })
+})
+
+test('wrapped dispatcher stats globally include retry activity', async (t) => {
+  let requests = 0
+  const server = await startServer((_req, res) => {
+    requests++
+    res.writeHead(requests === 1 ? 503 : 200)
+    res.end()
+  })
+  t.teardown(() => server.close())
+
+  const agent = new undici.Agent()
+  t.teardown(() => agent.close())
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const before = getGlobalDispatcherStats().retry
+
+  await rawRequest((opts, handler) => nxtDispatch(agent, opts, handler), {
+    origin,
+    path: '/',
+    method: 'GET',
+    headers: {},
+    retry: 1,
+  })
+
+  const after = getGlobalDispatcherStats().retry
+  t.equal(after.retries, before.retries + 1)
+  t.equal(after.headerRetries, before.headerRetries + 1)
+  t.equal(after.recovered, before.recovered + 1)
+  t.equal(after.pending, 0)
 })
 
 test('wrapped dispatcher stats can be read for one dispatcher', async (t) => {

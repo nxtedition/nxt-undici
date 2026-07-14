@@ -103,6 +103,165 @@ test('redirect stats count accepted redirect hops', async (t) => {
   t.same(redirect.stats(), { followed: 1 })
 })
 
+test('retry stats count pending decisions, actual attempts, and outcomes', async (t) => {
+  const retry = interceptors.responseRetry()
+  let attempts = 0
+  let decide
+  const decision = new Promise((resolve) => {
+    decide = resolve
+  })
+  const dispatch = retry((_opts, handler) => {
+    attempts++
+    complete(handler, attempts === 1 ? 503 : 200)
+  })
+
+  const response = rawRequest(dispatch, {
+    origin: 'http://example.test',
+    path: '/',
+    method: 'GET',
+    headers: {},
+    retry: () => decision,
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  t.same(retry.stats(), {
+    retries: 0,
+    headerRetries: 0,
+    bodyRetries: 0,
+    recovered: 0,
+    failed: 0,
+    aborted: 0,
+    pending: 1,
+  })
+
+  decide(true)
+  t.equal((await response).statusCode, 200)
+  t.same(retry.stats(), {
+    retries: 1,
+    headerRetries: 1,
+    bodyRetries: 0,
+    recovered: 1,
+    failed: 0,
+    aborted: 0,
+    pending: 0,
+  })
+
+  let failedAttempts = 0
+  const failedDispatch = retry((_opts, handler) => {
+    failedAttempts++
+    complete(handler, 503)
+  })
+  t.equal(
+    (
+      await rawRequest(failedDispatch, {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+        retry: 1,
+      })
+    ).statusCode,
+    503,
+  )
+  t.equal(failedAttempts, 2)
+  t.match(retry.stats(), {
+    retries: 2,
+    headerRetries: 2,
+    recovered: 1,
+    failed: 1,
+    pending: 0,
+  })
+})
+
+test('retry stats distinguish body-resume retries', async (t) => {
+  const retry = interceptors.responseRetry()
+  let attempts = 0
+  const dispatch = retry((opts, handler) => {
+    attempts++
+    handler.onConnect(() => {})
+    if (attempts === 1) {
+      handler.onHeaders(200, { 'content-length': '5', etag: '"v1"' }, () => {})
+      handler.onData(Buffer.from('he'))
+      handler.onError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+      return
+    }
+
+    t.equal(opts.headers.range, 'bytes=2-4')
+    handler.onHeaders(
+      206,
+      { 'content-range': 'bytes 2-4/5', 'content-length': '3', etag: '"v1"' },
+      () => {},
+    )
+    handler.onData(Buffer.from('llo'))
+    handler.onComplete([])
+  })
+
+  const response = await rawRequest(dispatch, {
+    origin: 'http://example.test',
+    path: '/',
+    method: 'GET',
+    headers: {},
+    retry: 1,
+  })
+
+  t.equal(response.body, 'hello')
+  t.same(retry.stats(), {
+    retries: 1,
+    headerRetries: 0,
+    bodyRetries: 1,
+    recovered: 1,
+    failed: 0,
+    aborted: 0,
+    pending: 0,
+  })
+})
+
+test('retry stats distinguish caller aborts after a retry', async (t) => {
+  const retry = interceptors.responseRetry()
+  const reason = new Error('stop')
+  const reset = Object.assign(new Error('reset'), { code: 'ECONNRESET' })
+  let attempts = 0
+  let abortRequest
+  const dispatch = retry((_opts, handler) => {
+    attempts++
+    handler.onConnect((abortReason) => handler.onError(abortReason))
+    if (attempts === 1) {
+      handler.onError(reset)
+    } else {
+      abortRequest(reason)
+    }
+  })
+
+  const err = await new Promise((resolve) => {
+    dispatch(
+      {
+        origin: 'http://example.test',
+        path: '/',
+        method: 'GET',
+        headers: {},
+        retry: 1,
+      },
+      {
+        onConnect(abort) {
+          abortRequest = abort
+        },
+        onError: resolve,
+      },
+    )
+  })
+
+  t.equal(err, reason)
+  t.same(retry.stats(), {
+    retries: 1,
+    headerRetries: 1,
+    bodyRetries: 0,
+    recovered: 0,
+    failed: 0,
+    aborted: 1,
+    pending: 0,
+  })
+})
+
 test('dns stats distinguish cache hits, misses, negative hits, and resolver work', async (t) => {
   const dns = interceptors.dns()
   const dispatch = dns((_opts, handler) => complete(handler))

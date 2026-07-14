@@ -158,7 +158,7 @@ test('SqliteCacheStore stats expose operations, queue depth, and capacity', asyn
   t.equal(store.stats.closed, true)
 })
 
-test('wrapped dispatcher stats globally include cache and pressure snapshots', async (t) => {
+test('wrapped dispatcher stats globally include every interceptor snapshot', async (t) => {
   const server = await startServer((_req, res) => {
     res.writeHead(200, { 'cache-control': 's-maxage=60' })
     res.end('global')
@@ -187,4 +187,73 @@ test('wrapped dispatcher stats globally include cache and pressure snapshots', a
       completed: 1,
     },
   )
+  t.same(stats.priority, [])
+  t.same(stats.redirect, { followed: 0 })
+  t.same(stats.dns, {
+    hits: 0,
+    misses: 0,
+    negativeHits: 0,
+    lookups: 0,
+    refreshes: 0,
+    errors: 0,
+    evictions: 0,
+    pending: 0,
+  })
+  t.match(stats.lookup, { lookups: 2, errors: 0, pending: 0 })
+})
+
+test('global stats forward active priority, DNS, redirect, and lookup state', async (t) => {
+  const calls = []
+  const dispatcher = {
+    dispatch(opts, handler) {
+      calls.push({ opts, handler })
+    },
+  }
+  const origin = 'http://stats.test'
+  const response = rawRequest((opts, handler) => nxtDispatch(dispatcher, opts, handler), {
+    origin,
+    path: '/start',
+    method: 'GET',
+    headers: {},
+    priority: 'high',
+    follow: 1,
+    retry: 0,
+    dns: {
+      ttl: 60e3,
+      lookup(_hostname, _opts, callback) {
+        callback(null, [{ address: '127.0.0.1', family: 4 }])
+      },
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  t.equal(calls.length, 1)
+
+  let stats = getGlobalDispatcherStats()
+  t.match(
+    stats.priority.find((entry) => entry.origin === origin),
+    { running: 1, pending: 0 },
+  )
+  t.ok(stats.dns.misses >= 1)
+  t.ok(stats.dns.lookups >= 1)
+  t.ok(stats.lookup.lookups >= 1)
+
+  calls[0].handler.onConnect(() => {})
+  calls[0].handler.onHeaders(302, { location: '/next' }, () => {})
+  calls[0].handler.onComplete([])
+
+  await new Promise((resolve) => setImmediate(resolve))
+  t.equal(calls.length, 2)
+  stats = getGlobalDispatcherStats()
+  t.ok(stats.redirect.followed >= 1)
+  t.ok(stats.dns.hits >= 1)
+  t.match(
+    stats.priority.find((entry) => entry.origin === origin),
+    { running: 1, pending: 0 },
+  )
+
+  calls[1].handler.onConnect(() => {})
+  calls[1].handler.onHeaders(200, {}, () => {})
+  calls[1].handler.onComplete([])
+  await response
 })

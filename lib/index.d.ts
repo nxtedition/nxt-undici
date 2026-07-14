@@ -322,6 +322,81 @@ export interface PressureInterceptor {
   [Symbol.dispose](): void
 }
 
+export interface SchedulerQueueStats {
+  /** Gauge: tasks currently queued at this priority. */
+  count: number
+  /** Counter: tasks ever queued at this priority. */
+  deferred: number
+  /** Counter: queued tasks ever admitted at this priority. */
+  completed: number
+}
+
+export interface PriorityStats {
+  origin: string
+  /** Gauge: scheduler slots currently held. */
+  running: number
+  concurrency: number
+  /** Gauge: tasks waiting for scheduler admission. */
+  pending: number
+  total: SchedulerQueueStats
+  /** Lowest through highest priority. */
+  queues: SchedulerQueueStats[]
+  shared: { running: number; waiters: number } | undefined
+}
+
+export interface PriorityInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  /** One live scheduler snapshot per canonical logical origin. */
+  stats(): PriorityStats[]
+}
+
+export interface RedirectStats {
+  /** Counter: accepted redirect hops. */
+  followed: number
+}
+
+export interface RedirectInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  stats(): RedirectStats
+}
+
+export interface DnsStats {
+  /** Counters: positive-cache hits and foreground cache misses. */
+  hits: number
+  misses: number
+  /** Counter: requests rejected from the negative cache. */
+  negativeHits: number
+  /** Counter: actual resolver calls, excluding callers joining in-flight work. */
+  lookups: number
+  /** Counter: pre-emptive refresh resolver calls. */
+  refreshes: number
+  /** Counter: failed resolver calls. */
+  errors: number
+  /** Counter: selected addresses evicted after connection failures. */
+  evictions: number
+  /** Gauge: resolver calls currently in flight. */
+  pending: number
+}
+
+export interface DnsInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  stats(): DnsStats
+}
+
+export interface LookupStats {
+  /** Counter: logical-origin lookup attempts. */
+  lookups: number
+  /** Counter: failed logical-origin lookups. */
+  errors: number
+  /** Gauge: logical-origin lookups currently in flight. */
+  pending: number
+}
+
+export interface LookupInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  stats(): LookupStats
+}
+
 export interface SqliteCacheStoreStats {
   gets: number
   hits: number
@@ -367,6 +442,10 @@ export interface CacheInterceptor {
 export interface GlobalDispatcherStats {
   cache: CacheStats
   pressure: Array<PressureStats & { origin: string }>
+  priority: PriorityStats[]
+  redirect: RedirectStats
+  dns: DnsStats
+  lookup: LookupStats
 }
 
 export interface CacheKey {
@@ -456,7 +535,7 @@ export function compose(
   ...interceptors: (Interceptor | null | undefined)[]
 ): DispatchFn
 
-/** Aggregate cache and pressure snapshots for every live dispatcher wrapped
+/** Aggregate interceptor snapshots for every live dispatcher wrapped
  * by this module in the current thread. Also exposed through the global
  * `Symbol.for('@nxtedition/nxt-undici/dispatcher-stats')` provider. */
 export function getGlobalDispatcherStats(): GlobalDispatcherStats
@@ -470,13 +549,13 @@ export const interceptors: {
   responseRetry: () => Interceptor
   responseVerify: () => Interceptor
   log: (opts?: LogInterceptorOptions) => Interceptor
-  redirect: () => Interceptor
+  redirect: () => RedirectInterceptor
   proxy: () => Interceptor
   cache: (opts?: CacheInterceptorOptions) => CacheInterceptor
   requestId: () => Interceptor
-  dns: () => Interceptor
-  lookup: () => Interceptor
-  priority: () => Interceptor
+  dns: () => DnsInterceptor
+  lookup: () => LookupInterceptor
+  priority: () => PriorityInterceptor
   pressure: (opts?: PressureInterceptorOptions) => PressureInterceptor
 }
 

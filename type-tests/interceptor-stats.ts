@@ -1,4 +1,6 @@
 import {
+  Agent,
+  getDispatcherStats,
   getGlobalDispatcherStats,
   interceptors,
   type DnsStats,
@@ -12,6 +14,7 @@ const redirect: RedirectStats = interceptors.redirect().stats()
 const dns: DnsStats = interceptors.dns().stats()
 const lookup: LookupStats = interceptors.lookup().stats()
 const global = getGlobalDispatcherStats()
+const dispatcher = getDispatcherStats(new Agent())
 
 priority[0]?.queues[0]?.completed
 redirect.followed
@@ -21,3 +24,5 @@ global.priority
 global.redirect
 global.dns
 global.lookup
+dispatcher.cache
+dispatcher.pressure

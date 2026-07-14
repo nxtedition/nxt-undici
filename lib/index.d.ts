@@ -439,7 +439,7 @@ export interface CacheInterceptor {
   stats(): CacheStats
 }
 
-export interface GlobalDispatcherStats {
+export interface DispatcherStats {
   cache: CacheStats
   pressure: Array<PressureStats & { origin: string }>
   priority: PriorityStats[]
@@ -447,6 +447,8 @@ export interface GlobalDispatcherStats {
   dns: DnsStats
   lookup: LookupStats
 }
+
+export type GlobalDispatcherStats = DispatcherStats
 
 export interface CacheKey {
   origin: string
@@ -539,6 +541,10 @@ export function compose(
  * by this module in the current thread. Also exposed through the global
  * `Symbol.for('@nxtedition/nxt-undici/dispatcher-stats')` provider. */
 export function getGlobalDispatcherStats(): GlobalDispatcherStats
+
+/** Return the interceptor statistics for one dispatcher. Calling this before
+ * the first request initializes the same lazy wrapper used by dispatch(). */
+export function getDispatcherStats(dispatcher: Dispatcher): DispatcherStats
 
 export function parseHeaders(headers?: HeaderInput | null): Record<string, string | string[]>
 

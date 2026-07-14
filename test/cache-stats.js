@@ -4,6 +4,7 @@ import { test } from 'tap'
 import undici from '@nxtedition/undici'
 import {
   dispatch as nxtDispatch,
+  getDispatcherStats,
   getGlobalDispatcherStats,
   interceptors,
   SqliteCacheStore,
@@ -200,6 +201,51 @@ test('wrapped dispatcher stats globally include every interceptor snapshot', asy
     pending: 0,
   })
   t.match(stats.lookup, { lookups: 2, errors: 0, pending: 0 })
+})
+
+test('wrapped dispatcher stats can be read for one dispatcher', async (t) => {
+  const server = await startServer((_req, res) => {
+    res.writeHead(200, { 'cache-control': 's-maxage=60' })
+    res.end('dispatcher')
+  })
+  t.teardown(() => server.close())
+
+  const firstStore = new SqliteCacheStore({ location: ':memory:' })
+  const secondStore = new SqliteCacheStore({ location: ':memory:' })
+  const firstAgent = new undici.Agent()
+  const secondAgent = new undici.Agent()
+  t.teardown(() => firstStore.close())
+  t.teardown(() => secondStore.close())
+  t.teardown(() => firstAgent.close())
+  t.teardown(() => secondAgent.close())
+
+  t.match(getDispatcherStats(firstAgent), {
+    cache: { hits: 0, misses: 0 },
+    pressure: [],
+  })
+
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const request = (agent, store, path) =>
+    rawRequest((opts, handler) => nxtDispatch(agent, opts, handler), {
+      origin,
+      path,
+      method: 'GET',
+      headers: {},
+      cache: { store },
+    })
+
+  await request(firstAgent, firstStore, '/first')
+  await request(firstAgent, firstStore, '/first')
+  await request(secondAgent, secondStore, '/second')
+
+  t.match(getDispatcherStats(firstAgent), {
+    cache: { hits: 1, misses: 1, hitRate: 0.5, store: { stores: 1 } },
+    pressure: [{ origin, completed: 1 }],
+  })
+  t.match(getDispatcherStats(secondAgent), {
+    cache: { hits: 0, misses: 1, hitRate: 0, store: { stores: 1 } },
+    pressure: [{ origin, completed: 1 }],
+  })
 })
 
 test('global stats forward active priority, DNS, redirect, and lookup state', async (t) => {

@@ -248,7 +248,7 @@ test('wrapped dispatcher stats can be read for one dispatcher', async (t) => {
   })
 })
 
-test('global stats forward active priority, DNS, redirect, and lookup state', async (t) => {
+test('global and per-dispatcher stats forward priority, DNS, redirect, and lookup state', async (t) => {
   const calls = []
   const dispatcher = {
     dispatch(opts, handler) {
@@ -283,6 +283,14 @@ test('global stats forward active priority, DNS, redirect, and lookup state', as
   t.ok(stats.dns.misses >= 1)
   t.ok(stats.dns.lookups >= 1)
   t.ok(stats.lookup.lookups >= 1)
+  let dispatcherStats = getDispatcherStats(dispatcher)
+  t.match(
+    dispatcherStats.priority.find((entry) => entry.origin === origin),
+    { running: 1, pending: 0 },
+  )
+  t.ok(dispatcherStats.dns.misses >= 1)
+  t.ok(dispatcherStats.dns.lookups >= 1)
+  t.ok(dispatcherStats.lookup.lookups >= 1)
 
   calls[0].handler.onConnect(() => {})
   calls[0].handler.onHeaders(302, { location: '/next' }, () => {})
@@ -297,6 +305,9 @@ test('global stats forward active priority, DNS, redirect, and lookup state', as
     stats.priority.find((entry) => entry.origin === origin),
     { running: 1, pending: 0 },
   )
+  dispatcherStats = getDispatcherStats(dispatcher)
+  t.ok(dispatcherStats.redirect.followed >= 1)
+  t.ok(dispatcherStats.dns.hits >= 1)
 
   calls[1].handler.onConnect(() => {})
   calls[1].handler.onHeaders(200, {}, () => {})

@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { DatabaseSync, StatementSync } from 'node:sqlite'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
-const versionedDb = (location) => `${location}.v14`
+const versionedDb = (location) => path.join(location, 'v14')
 
 function makeKey(overrides = {}) {
   return { origin: 'https://example.com', method: 'GET', path: '/test', ...overrides }

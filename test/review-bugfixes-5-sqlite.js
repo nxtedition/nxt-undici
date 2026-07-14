@@ -44,21 +44,16 @@ function makeValue(overrides = {}) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-const versionedDb = (location) => `${location}.v14`
+const versionedDb = (location) => path.join(location, 'v14')
 
 function tmpDb(t, prefix) {
   const dbPath = path.join(
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const location of [dbPath, versionedDb(dbPath)]) {
-      for (const ext of ['', '-wal', '-shm']) {
-        try {
-          fs.unlinkSync(location + ext)
-        } catch {}
-      }
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }

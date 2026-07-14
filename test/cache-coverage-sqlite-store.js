@@ -40,7 +40,7 @@ function makeValue(overrides = {}) {
 
 // set() is async (batched via setImmediate); one tick lets a flush run.
 const flush = () => new Promise((resolve) => setImmediate(resolve))
-const versionedDb = (location) => `${location}.v14`
+const versionedDb = (location) => path.join(location, 'v14')
 
 // Poll until fn() is truthy, bounded by a deadline (never wait forever).
 async function waitFor(fn, timeout = 5000) {
@@ -57,14 +57,9 @@ function tmpDb(t, prefix) {
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const location of [dbPath, versionedDb(dbPath)]) {
-      for (const ext of ['', '-wal', '-shm']) {
-        try {
-          fs.unlinkSync(location + ext)
-        } catch {}
-      }
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }

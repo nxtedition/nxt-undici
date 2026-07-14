@@ -12,19 +12,14 @@ function tmpDb(t, prefix) {
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const location of [dbPath, versionedDb(dbPath)]) {
-      for (const ext of ['', '-wal', '-shm', '-journal']) {
-        try {
-          fs.unlinkSync(location + ext)
-        } catch {}
-      }
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }
 
-const versionedDb = (location) => `${location}.v14`
+const versionedDb = (location, version = 14) => path.join(location, `v${version}`)
 
 function tableNames(db) {
   return db
@@ -33,9 +28,21 @@ function tableNames(db) {
     .map(({ name }) => name)
 }
 
-test('v14 uses a separate filename and leaves the legacy database untouched', (t) => {
+test('constructor creates a nested cache location', (t) => {
+  const root = tmpDb(t, 'nested-location')
+  const location = path.join(root, 'nested', 'cache')
+
+  const store = new SqliteCacheStore({ location })
+  store.close()
+
+  t.ok(fs.existsSync(versionedDb(location)), 'the v14 database was created below location')
+  t.end()
+})
+
+test('v14 uses a separate file and leaves the v13 database untouched', (t) => {
   const dbPath = tmpDb(t, 'schema-v13-to-v14')
-  const seed = new DatabaseSync(dbPath)
+  const oldPath = versionedDb(dbPath, 13)
+  const seed = new DatabaseSync(oldPath)
   seed.exec(`
     CREATE TABLE cacheInterceptorV13 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,15 +53,15 @@ test('v14 uses a separate filename and leaves the legacy database untouched', (t
       VALUES ('https://old.example.com/secret', x'deadbeef');
   `)
   seed.close()
-  const before = fs.readFileSync(dbPath)
+  const before = fs.readFileSync(oldPath)
 
   const store = new SqliteCacheStore({ location: dbPath })
   store.close()
 
-  t.strictSame(fs.readFileSync(dbPath), before, 'the v13 database is byte-for-byte unchanged')
-  t.ok(fs.existsSync(versionedDb(dbPath)), 'the v14 database uses a versioned filename')
+  t.strictSame(fs.readFileSync(oldPath), before, 'the v13 database is byte-for-byte unchanged')
+  t.ok(fs.existsSync(versionedDb(dbPath)), 'the v14 database uses a versioned path')
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(oldPath, { readOnly: true })
   t.teardown(() => check.close())
   t.strictSame(
     tableNames(check).filter((name) => /^cacheInterceptorV\d+$/.test(name)),

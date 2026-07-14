@@ -6,8 +6,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { SqliteCacheStore } from '../lib/sqlite-cache-store.js'
 
-const versionedDb = (location) => `${location}.v14`
-
 function makeKey(overrides = {}) {
   return { origin: 'https://example.com', method: 'GET', path: '/test', ...overrides }
 }
@@ -105,11 +103,7 @@ test('vary: header absent at store time must miss when a later request supplies 
 test('close() persists a large batch that exceeds one flush time slice', (t) => {
   const dbPath = tmpDb('cache-close-large')
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm']) {
-      try {
-        fs.unlinkSync(versionedDb(dbPath) + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
 
   const N = 20000

@@ -360,6 +360,28 @@ export interface RedirectInterceptor {
   stats(): RedirectStats
 }
 
+export interface RetryStats {
+  /** Counter: actual re-dispatches after the initial attempt. */
+  retries: number
+  /** Counter: retries before response headers were exposed. */
+  headerRetries: number
+  /** Counter: range-resume retries after response headers were exposed. */
+  bodyRetries: number
+  /** Counter: logical requests that succeeded after at least one retry. */
+  recovered: number
+  /** Counter: logical requests that still failed after at least one retry. */
+  failed: number
+  /** Counter: logical requests aborted by the caller after at least one retry. */
+  aborted: number
+  /** Gauge: retry decisions or backoff waits currently pending. */
+  pending: number
+}
+
+export interface RetryInterceptor {
+  (dispatch: DispatchFn): DispatchFn
+  stats(): RetryStats
+}
+
 export interface DnsStats {
   /** Counters: positive-cache hits and foreground cache misses. */
   hits: number
@@ -446,6 +468,7 @@ export interface DispatcherStats {
   redirect: RedirectStats
   dns: DnsStats
   lookup: LookupStats
+  retry: RetryStats
 }
 
 export type GlobalDispatcherStats = DispatcherStats
@@ -552,7 +575,7 @@ export const interceptors: {
   query: () => Interceptor
   requestBodyFactory: () => Interceptor
   responseError: () => Interceptor
-  responseRetry: () => Interceptor
+  responseRetry: () => RetryInterceptor
   responseVerify: () => Interceptor
   log: (opts?: LogInterceptorOptions) => Interceptor
   redirect: () => RedirectInterceptor

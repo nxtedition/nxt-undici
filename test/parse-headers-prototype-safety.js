@@ -19,5 +19,21 @@ test('parseHeaders treats prototype names as ordinary header names', (t) => {
   t.equal(Object.hasOwn(fromObject, 'constructor'), true)
   t.equal(fromObject.constructor, 'object-constructor')
 
+  let inheritedSetterCalls = 0
+  Object.defineProperty(Object.prototype, 'x-inherited-setter', {
+    configurable: true,
+    set() {
+      inheritedSetterCalls++
+    },
+  })
+  try {
+    const fromPollutedPrototype = parseHeaders({ 'x-inherited-setter': 'safe' })
+    t.equal(inheritedSetterCalls, 0)
+    t.equal(Object.hasOwn(fromPollutedPrototype, 'x-inherited-setter'), true)
+    t.equal(fromPollutedPrototype['x-inherited-setter'], 'safe')
+  } finally {
+    delete Object.prototype['x-inherited-setter']
+  }
+
   t.end()
 })

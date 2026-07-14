@@ -540,7 +540,7 @@ export interface RequestOptions extends Omit<DispatchOptions, 'upgrade'> {
 
 export interface ResponseData {
   statusCode: number
-  headers: Record<string, string | string[] | undefined>
+  headers: Record<string, string | string[]>
   body: BodyReadable
 }
 

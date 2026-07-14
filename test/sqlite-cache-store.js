@@ -1024,11 +1024,7 @@ test('file-based store persists data across instances', (t) => {
   // so data written with set() is always readable by the next instance.
   const dbPath = path.join(os.tmpdir(), `cache-test-${Date.now()}.sqlite`)
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm']) {
-      try {
-        fs.unlinkSync(dbPath + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
 
   const store1 = new SqliteCacheStore({ location: dbPath })
@@ -1050,11 +1046,7 @@ test('file-based store persists data across instances', (t) => {
 test('close() flushes pending items before closing the DB', (t) => {
   const dbPath = path.join(os.tmpdir(), `cache-close-${Date.now()}.sqlite`)
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm']) {
-      try {
-        fs.unlinkSync(dbPath + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
 
   const store = new SqliteCacheStore({ location: dbPath })

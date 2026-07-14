@@ -1,6 +1,5 @@
-// SQLite cache files are intentionally never migrated or destructively
-// repaired. A different cache schema version or corrupt database is an
-// operator-visible startup failure, and the file must remain untouched.
+// SQLite cache files are versioned by schema so rolling deployments never
+// open, migrate, or destructively repair another package version's data.
 import { test } from 'tap'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,15 +12,14 @@ function tmpDb(t, prefix) {
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm', '-journal']) {
-      try {
-        fs.unlinkSync(dbPath + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }
+
+const versionedDb = (location, version = 14) => path.join(location, `v${version}`)
 
 function tableNames(db) {
   return db
@@ -30,9 +28,21 @@ function tableNames(db) {
     .map(({ name }) => name)
 }
 
-test('v13 is rejected byte-for-byte before the v14 table is created', (t) => {
+test('constructor creates a nested cache location', (t) => {
+  const root = tmpDb(t, 'nested-location')
+  const location = path.join(root, 'nested', 'cache')
+
+  const store = new SqliteCacheStore({ location })
+  store.close()
+
+  t.ok(fs.existsSync(versionedDb(location)), 'the v14 database was created below location')
+  t.end()
+})
+
+test('v14 uses a separate file and leaves the v13 database untouched', (t) => {
   const dbPath = tmpDb(t, 'schema-v13-to-v14')
-  const seed = new DatabaseSync(dbPath)
+  const oldPath = versionedDb(dbPath, 13)
+  const seed = new DatabaseSync(oldPath)
   seed.exec(`
     CREATE TABLE cacheInterceptorV13 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,32 +53,29 @@ test('v13 is rejected byte-for-byte before the v14 table is created', (t) => {
       VALUES ('https://old.example.com/secret', x'deadbeef');
   `)
   seed.close()
-  const before = fs.readFileSync(dbPath)
+  const before = fs.readFileSync(oldPath)
 
-  let error
-  try {
-    new SqliteCacheStore({ location: dbPath })
-    t.fail('construction should reject schema v13')
-  } catch (err) {
-    error = err
-  }
+  const store = new SqliteCacheStore({ location: dbPath })
+  store.close()
 
-  t.equal(error?.code, 'ERR_SQLITE_CACHE_SCHEMA_MISMATCH')
-  t.match(error?.message, /expected cacheInterceptorV14, found cacheInterceptorV13/)
-  t.strictSame(fs.readFileSync(dbPath), before, 'the v13 database is byte-for-byte unchanged')
+  t.strictSame(fs.readFileSync(oldPath), before, 'the v13 database is byte-for-byte unchanged')
+  t.ok(fs.existsSync(versionedDb(dbPath)), 'the v14 database uses a versioned path')
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(oldPath, { readOnly: true })
   t.teardown(() => check.close())
   t.strictSame(
     tableNames(check).filter((name) => /^cacheInterceptorV\d+$/.test(name)),
     ['cacheInterceptorV13'],
-    'v14 was not created and v13 was not dropped',
+    'v13 was not dropped or modified',
   )
   t.equal(
     check.prepare('SELECT hex(body) AS body FROM cacheInterceptorV13').get().body,
     'DEADBEEF',
     'v13 data remains readable to an operator-selected older package',
   )
+  const current = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
+  t.teardown(() => current.close())
+  t.ok(tableNames(current).includes('cacheInterceptorV14'), 'v14 was created separately')
   t.end()
 })
 
@@ -101,7 +108,7 @@ test('v14 operates and persists Authorization provenance with response Date', (t
   t.equal(value?.authorizationRequest, true)
   reopened.close()
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   t.teardown(() => check.close())
   t.ok(tableNames(check).includes('cacheInterceptorV14'), 'the current v14 table exists')
   const columns = check.prepare('PRAGMA table_info(cacheInterceptorV14)').all()
@@ -118,7 +125,8 @@ test('v14 operates and persists Authorization provenance with response Date', (t
 
 test('incompatible cache schema versions fail without modifying the database', (t) => {
   const dbPath = tmpDb(t, 'schema-mismatch')
-  const seed = new DatabaseSync(dbPath)
+  const currentPath = versionedDb(dbPath)
+  const seed = new DatabaseSync(currentPath)
   seed.exec(`
     CREATE TABLE cacheInterceptorV99998 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,7 +158,7 @@ test('incompatible cache schema versions fail without modifying the database', (
   t.equal(error?.code, 'ERR_SQLITE_CACHE_SCHEMA_MISMATCH')
   t.match(error?.message, /cacheInterceptorV99998, cacheInterceptorV99999/)
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(currentPath, { readOnly: true })
   t.teardown(() => check.close())
   const numericCacheTables = tableNames(check).filter((name) => /^cacheInterceptorV\d+$/.test(name))
   t.strictSame(
@@ -173,7 +181,8 @@ test('incompatible cache schema versions fail without modifying the database', (
 
 test('non-version tables sharing the cache prefix remain compatible', (t) => {
   const dbPath = tmpDb(t, 'prefix-table')
-  const seed = new DatabaseSync(dbPath)
+  const currentPath = versionedDb(dbPath)
+  const seed = new DatabaseSync(currentPath)
   seed.exec(`
     CREATE TABLE cacheInterceptorVBackup (k TEXT PRIMARY KEY, v TEXT);
     INSERT INTO cacheInterceptorVBackup (k, v) VALUES ('keep', 'me');
@@ -183,7 +192,7 @@ test('non-version tables sharing the cache prefix remain compatible', (t) => {
   const store = new SqliteCacheStore({ location: dbPath })
   store.close()
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(currentPath, { readOnly: true })
   t.teardown(() => check.close())
   t.equal(
     check.prepare('SELECT v FROM cacheInterceptorVBackup WHERE k = ?').get('keep').v,
@@ -199,8 +208,9 @@ test('non-version tables sharing the cache prefix remain compatible', (t) => {
 
 test('corrupt database fails hard and is not replaced', (t) => {
   const dbPath = tmpDb(t, 'corrupt-db')
+  const currentPath = versionedDb(dbPath)
   const original = Buffer.from('this is not a sqlite database')
-  fs.writeFileSync(dbPath, original)
+  fs.writeFileSync(currentPath, original)
 
   let error
   try {
@@ -210,13 +220,13 @@ test('corrupt database fails hard and is not replaced', (t) => {
     error = err
   }
   t.equal(error?.errcode, 26, 'original SQLITE_NOTADB error propagates')
-  t.strictSame(fs.readFileSync(dbPath), original, 'corrupt file is preserved byte-for-byte')
+  t.strictSame(fs.readFileSync(currentPath), original, 'corrupt file is preserved byte-for-byte')
   t.end()
 })
 
 test('a close() failure during schema-error cleanup does not mask the original error', (t) => {
   const dbPath = tmpDb(t, 'schema-close-fail')
-  const seed = new DatabaseSync(dbPath)
+  const seed = new DatabaseSync(versionedDb(dbPath))
   seed.exec('CREATE TABLE cacheInterceptorV99999 (id INTEGER PRIMARY KEY);')
   seed.close()
 

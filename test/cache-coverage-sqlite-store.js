@@ -40,6 +40,7 @@ function makeValue(overrides = {}) {
 
 // set() is async (batched via setImmediate); one tick lets a flush run.
 const flush = () => new Promise((resolve) => setImmediate(resolve))
+const versionedDb = (location) => path.join(location, 'v14')
 
 // Poll until fn() is truthy, bounded by a deadline (never wait forever).
 async function waitFor(fn, timeout = 5000) {
@@ -56,19 +57,16 @@ function tmpDb(t, prefix) {
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm']) {
-      try {
-        fs.unlinkSync(dbPath + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }
 
 // Count rows in the current-version cache table of a CLOSED file-backed store.
 function countRows(dbPath) {
-  const db = new DatabaseSync(dbPath, { readOnly: true })
+  const db = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   try {
     const table = db
       .prepare(
@@ -120,7 +118,7 @@ test('constructor honors opts.db.timeout and maxSize with a file-backed db', asy
 test('old-version tables fail hard, prefix-sharing user tables are kept', (t) => {
   const dbPath = tmpDb(t, 'schema-mismatch')
 
-  const seed = new DatabaseSync(dbPath)
+  const seed = new DatabaseSync(versionedDb(dbPath))
   seed.exec(`
     CREATE TABLE cacheInterceptorV1 (id INTEGER PRIMARY KEY, url TEXT);
     INSERT INTO cacheInterceptorV1 (url) VALUES ('https://old.example.com/');
@@ -137,7 +135,7 @@ test('old-version tables fail hard, prefix-sharing user tables are kept', (t) =>
   }
   t.equal(error?.code, 'ERR_SQLITE_CACHE_SCHEMA_MISMATCH')
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
+  const check = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   t.teardown(() => check.close())
   const tables = check
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
@@ -1101,7 +1099,7 @@ test('makeResult fails closed for an unexpected persisted Authorization marker',
   await flush()
   store.close()
 
-  const db = new DatabaseSync(dbPath)
+  const db = new DatabaseSync(versionedDb(dbPath))
   db.prepare('UPDATE cacheInterceptorV14 SET authorizationRequest = ?').run(2)
   db.close()
 

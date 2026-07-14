@@ -44,18 +44,16 @@ function makeValue(overrides = {}) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const versionedDb = (location) => path.join(location, 'v14')
 
 function tmpDb(t, prefix) {
   const dbPath = path.join(
     os.tmpdir(),
     `${prefix}-${process.pid}-${Math.random().toString(36).slice(2)}.sqlite`,
   )
+  fs.mkdirSync(dbPath, { recursive: true })
   t.teardown(() => {
-    for (const ext of ['', '-wal', '-shm']) {
-      try {
-        fs.unlinkSync(dbPath + ext)
-      } catch {}
-    }
+    fs.rmSync(dbPath, { recursive: true, force: true })
   })
   return dbPath
 }
@@ -114,7 +112,7 @@ test('schema v14: Date-ordered lookup needs no temp B-tree; body is last', async
   t.ok(store.get(makeKey()), 'sanity: entry readable')
   store.close()
 
-  const db = new DatabaseSync(dbPath, { readOnly: true })
+  const db = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   t.teardown(() => db.close())
   const table = db
     .prepare(
@@ -165,7 +163,7 @@ test('constructor retries SQLITE_BUSY while another process holds the write lock
         db.close()
       }, 500)
       `,
-      dbPath,
+      versionedDb(dbPath),
     ],
     { stdio: ['ignore', 'pipe', 'inherit'] },
   )
@@ -198,7 +196,7 @@ test('max_page_count uses the actual page size of a pre-existing DB file', async
   // Pin a 1024-byte page size before the store ever sees the file. With the
   // hard-coded 4096 the byte cap becomes maxSize/4 and eviction churns at a
   // quarter of the configured budget.
-  const seed = new DatabaseSync(dbPath)
+  const seed = new DatabaseSync(versionedDb(dbPath))
   seed.exec(`
     PRAGMA page_size = 1024;
     CREATE TABLE seed (x INTEGER);
@@ -263,7 +261,7 @@ test('equivalent vary maps serialize canonically so supersede replaces instead o
   store.set(makeKey(), makeValue({ vary: { 'accept-encoding': 'gzip', b: 'y' } }))
   await flush()
 
-  const db = new DatabaseSync(dbPath, { readOnly: true })
+  const db = new DatabaseSync(versionedDb(dbPath), { readOnly: true })
   t.teardown(() => db.close())
   const table = db
     .prepare(

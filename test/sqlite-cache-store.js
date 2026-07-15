@@ -1063,16 +1063,26 @@ test('location directory that already exists is tolerated (rolling-deploy race)'
   t.end()
 })
 
-test('EEXIST from a non-directory at location is swallowed, not surfaced as EEXIST', (t) => {
-  // A regular file at `location` makes mkdirSync(recursive) throw EEXIST. The
-  // constructor still fails (the file is not a usable cache directory), but the
-  // EEXIST must be swallowed rather than propagated.
+test('a pre-directory-layout file at location is migrated to a directory', (t) => {
+  // Older package versions stored the database as a single file *at* `location`.
+  // mkdirSync(recursive) throws EEXIST on that file; the store must remove the
+  // stale file (and its sqlite sidecars) and reclaim the path as a directory
+  // rather than failing to open.
   const file = path.join(os.tmpdir(), `cache-file-${Date.now()}`)
   fs.writeFileSync(file, 'x')
-  t.teardown(() => fs.rmSync(file, { force: true }))
+  fs.writeFileSync(`${file}-wal`, 'x')
+  fs.writeFileSync(`${file}-shm`, 'x')
+  t.teardown(() => fs.rmSync(file, { recursive: true, force: true }))
 
-  const err = t.throws(() => new SqliteCacheStore({ location: file }))
-  t.not(err.code, 'EEXIST', 'mkdir EEXIST is swallowed; a later, unrelated error surfaces')
+  const store = new SqliteCacheStore({ location: file })
+  t.teardown(() => store.close())
+
+  t.ok(fs.statSync(file).isDirectory(), 'stale file replaced by a cache directory')
+  t.notOk(fs.existsSync(`${file}-wal`), 'stale -wal sidecar removed')
+  t.notOk(fs.existsSync(`${file}-shm`), 'stale -shm sidecar removed')
+
+  store.set(makeKey({ path: '/migrated' }), makeValue({ body: Buffer.from('ok'), end: 2 }))
+  t.equal(store.get(makeKey({ path: '/migrated' })).body.toString(), 'ok')
   t.end()
 })
 

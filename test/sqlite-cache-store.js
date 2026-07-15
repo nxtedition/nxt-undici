@@ -1040,6 +1040,55 @@ test('file-based store persists data across instances', (t) => {
 })
 
 // ---------------------------------------------------------------------------
+// versionedLocation() directory creation
+// ---------------------------------------------------------------------------
+
+test('location directory that already exists is tolerated (rolling-deploy race)', (t) => {
+  // mkdirSync(recursive) can surface EEXIST when a concurrent deployment wins
+  // the race to create the same cache directory. Pre-creating the directory
+  // must not prevent the store from opening.
+  const dir = path.join(os.tmpdir(), `cache-exists-${Date.now()}`)
+  fs.mkdirSync(dir, { recursive: true })
+  t.teardown(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const store = new SqliteCacheStore({ location: dir })
+  t.teardown(() => store.close())
+
+  store.set(makeKey({ path: '/exists' }), makeValue({ body: Buffer.from('ok'), end: 2 }))
+  store.close()
+
+  const store2 = new SqliteCacheStore({ location: dir })
+  t.teardown(() => store2.close())
+  t.equal(store2.get(makeKey({ path: '/exists' })).body.toString(), 'ok')
+  t.end()
+})
+
+test('EEXIST from a non-directory at location is swallowed, not surfaced as EEXIST', (t) => {
+  // A regular file at `location` makes mkdirSync(recursive) throw EEXIST. The
+  // constructor still fails (the file is not a usable cache directory), but the
+  // EEXIST must be swallowed rather than propagated.
+  const file = path.join(os.tmpdir(), `cache-file-${Date.now()}`)
+  fs.writeFileSync(file, 'x')
+  t.teardown(() => fs.rmSync(file, { force: true }))
+
+  const err = t.throws(() => new SqliteCacheStore({ location: file }))
+  t.not(err.code, 'EEXIST', 'mkdir EEXIST is swallowed; a later, unrelated error surfaces')
+  t.end()
+})
+
+test('non-EEXIST mkdir errors propagate', (t) => {
+  // A location nested under a regular file makes mkdirSync throw ENOTDIR, which
+  // is not swallowed.
+  const file = path.join(os.tmpdir(), `cache-parent-${Date.now()}`)
+  fs.writeFileSync(file, 'x')
+  t.teardown(() => fs.rmSync(file, { force: true }))
+
+  const err = t.throws(() => new SqliteCacheStore({ location: path.join(file, 'sub') }))
+  t.equal(err.code, 'ENOTDIR', 'non-EEXIST mkdir error propagates unchanged')
+  t.end()
+})
+
+// ---------------------------------------------------------------------------
 // close() flushes pending items
 // ---------------------------------------------------------------------------
 
